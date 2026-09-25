@@ -13,7 +13,7 @@ from . import utils
 from .character import Character
 from .exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from .exploration_logic import ExplorationLogic
-from .global_logic import GlobalLogic
+from .global_logic import GlobalLogic, early_dig_xl
 from .glyph import MON, C, Hunger, G, SHOP
 from .item import Item, flatten_items
 from .item.inventory import Inventory
@@ -58,9 +58,11 @@ class Agent:
         self.last_bfs_dis = None
         self.last_bfs_step = None
         self.last_prayer_turn = None
+        self._monk_meat_meals = 0
         self._previous_glyphs = None
         self._last_turn = -1
         self._inactivity_counter = 0
+        self._pass_turn_after_error = False
         self._is_updating_state = False
 
         self._no_step_calls = False
@@ -732,8 +734,10 @@ class Agent:
             return self.message
 
     def is_safe_to_pray(self, limit=500):
+        # the prayer timeout starts at 300 and drops by one a turn; major trouble is fixed once it is
+        # at most 200, so the first prayer is safe from about turn 100 (not 300: a diver is long dead)
         return (
-                (self.last_prayer_turn is None and self.blstats.time > 300) or
+                (self.last_prayer_turn is None and self.blstats.time > 110) or
                 (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > limit)
         )
 
@@ -1139,8 +1143,10 @@ class Agent:
             if self.character.prop.polymorph:
                 actions = list(filter(lambda x: x[1][0] != 'ranged', actions))
 
+            actions = [a for a in actions if not self._touch_petrifies(a[1])]
+
             if allow_attack_all:
-                attack_actions = [a for a in actions if a[1][0] in ('melee', 'ranged', 'zap')]
+                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap')]
                 if attack_actions:
                     actions = attack_actions
 
@@ -1153,6 +1159,19 @@ class Agent:
                 actions_str = '|'.join([combat.utils.action_str(self, a) for a in sorted(actions, key=lambda x: x[0])])
                 with self.env.debug_log(actions_str):
                     wait_counter = self._fight2_perform_action(best_action, wait_counter)
+
+    def _touch_petrifies(self, action):
+        # hitting a cockatrice bare-handed (Monk martial arts) or kicking it
+        # barefoot turns you to stone on the spot
+        if action[0] not in ('melee', 'kick'):
+            return False
+        _, dy, dx = action
+        glyph = self.glyphs[self.blstats.y + dy, self.blstats.x + dx]
+        if glyph not in G.MONS or MON.permonst(glyph).mname not in ('cockatrice', 'chickatrice'):
+            return False
+        if action[0] == 'kick':
+            return self.inventory.items.boots is None
+        return self.inventory.items.gloves is None and self.inventory.items.main_hand is None
 
     def _fight2_perform_action(self, best_action, wait_counter):
         if best_action[0] == 'move':
@@ -1174,6 +1193,12 @@ class Agent:
                 self.melee_attack(target_y, target_x)
                 wait_counter = 0
                 return wait_counter
+
+        elif best_action[0] == 'kick':
+            _, dy, dx = best_action
+            self.kick(self.blstats.y + dy, self.blstats.x + dx)
+            wait_counter = 0
+            return wait_counter
 
         elif best_action[0] == 'ranged':
             _, dy, dx = best_action
@@ -1376,8 +1401,8 @@ class Agent:
             yield False
 
     def should_cast_heal(self):
-        # TODO: consider casting for other classes
-        if self.character.role != self.character.HEALER:
+        # a third of Monks start with the healing spellbook
+        if self.character.role not in (self.character.HEALER, self.character.MONK):
             return False
         if 'healing' not in self.character.known_spells:
             return False
@@ -1483,14 +1508,24 @@ class Agent:
                     self.zap(sleep_wand, direction)
                     return
 
+        # low HP is only "major trouble" to the god at HP <= 5 or HP <= max/7 (pray.c in_trouble);
+        # above that the prayer is answered "displeased", fixes nothing and burns the timeout
         if (
                 (self.is_safe_to_pray(500) and
-                 (self.blstats.hitpoints < 1 / 3
-                  * self.blstats.max_hitpoints or self.blstats.hitpoints < 8))
+                 (self.blstats.hitpoints * 7 <= self.blstats.max_hitpoints or self.blstats.hitpoints <= 5))
                 or (self.is_safe_to_pray(400) and self.blstats.hunger_state >= Hunger.FAINTING)
         ):
             yield True
             self.pray()
+            return
+
+        # standing on a down staircase at crisis HP with prayer spent: take it. Only adjacent
+        # monsters follow, the new level is a fresh start, and the depth is banked either way.
+        if (self.blstats.hitpoints < 1 / 3 * self.blstats.max_hitpoints or self.blstats.hitpoints < 8) and \
+                self.current_level().dungeon_number in (Level.DUNGEONS_OF_DOOM, Level.GNOMISH_MINES) and \
+                self.current_level().objects[self.blstats.y, self.blstats.x] in G.STAIR_DOWN:
+            yield True
+            self.direction('>')
             return
 
         # hypothesis: many runs die in melee at low XP (Xp5-7) across all four identities. This
@@ -1600,6 +1635,12 @@ class Agent:
         direction = self.calc_direction(y0, x0, best[1], best[2], allow_nonunit_distance=True)
         self.zap(sleep_wand, direction)
 
+    def pick_for_digging(self):
+        for item in flatten_items(self.inventory.items):
+            if item.is_unambiguous() and item.objs[0].name in ('pick-axe', 'dwarvish mattock')                     and item.status != Item.CURSED:
+                return item
+        return None
+
     @utils.debug_log('dig_down')
     @Strategy.wrap
     def dig_down(self):
@@ -1611,13 +1652,19 @@ class Agent:
         # digging to bank the much more valuable depth milestones. Digging for depth is legitimate
         # NetHack progression (not a scorer quirk), and every identity that finds a digging wand
         # turns a wasted, capped late game into a deeper, higher-scoring run.
-        if self.blstats.experience_level < 8:
+        # A pick-axe digs without limit, so whoever carries one (every Archeologist from turn 1)
+        # skips the Dlvl 1 grind and digs from EARLY_DIG_XL: monster difficulty tracks the average
+        # of depth and experience level, so a fresh character falls through levels faster than
+        # the dungeon can catch up with it, and depth is worth far more than the Xp 8 it forgoes.
+        if self.blstats.experience_level < 8 and not (
+                self.blstats.experience_level >= early_dig_xl(self.character) and self.pick_for_digging() is not None):
             yield False
             return
         if self.character.prop.polymorph:
             yield False
             return
-        if self.current_level().dungeon_number not in (Level.DUNGEONS_OF_DOOM, Level.GNOMISH_MINES):
+        # only the main dungeon: the Mines bottom out at Dlvl 10-13, the Dungeons of Doom at Medusa
+        if self.current_level().dungeon_number != Level.DUNGEONS_OF_DOOM:
             yield False
             return
         # stay safe: let fight2 / emergency_strategy handle threats before we spend turns digging
@@ -1645,18 +1692,17 @@ class Agent:
         # without limit. Depth is by far the most valuable progress milestone (Dlvl 10 = 0.126 >
         # Xp 9, Dlvl 12+ > 0.2), so in the deep phase keep applying the pick downward, falling a level
         # at a time, instead of stalling at Dlvl 2-5 with a digging tool unused in the pack.
-        pick = None
-        for item in flatten_items(self.inventory.items):
-            if item.is_unambiguous() and item.objs[0].name in ('pick-axe', 'dwarvish mattock') \
-                    and item.status != Item.CURSED:
-                pick = item
-                break
+        pick = self.pick_for_digging()
         if pick is None:
             yield False
             return
         y, x = self.blstats.y, self.blstats.x
         if self.current_level().objects[y, x] not in G.FLOOR or \
                 self.current_level().objects[y, x] in G.DOORS:
+            yield False
+            return
+        # falling out of a shop hands the whole pack, pick included, to the shopkeeper
+        if self.current_level().shop[y, x]:
             yield False
             return
         # give up on spots where digging makes no progress (undiggable floor, a hole we cannot
@@ -1727,12 +1773,36 @@ class Agent:
         if isinstance(exc, (KeyboardInterrupt, AgentFinished, SystemExit)):
             raise exc
         if isinstance(exc, BaseException):
-            if not isinstance(exc, AgentPanic) and not self.panic_on_errors:
-                raise exc
+            # hypothesis: many games end early because the bot crashes, not because the
+            # character dies. The Sokoban map strings were indented, so every scripted push
+            # failed an assertion, and other errors (unhandled prompts, hallucination missed on
+            # the abbreviated status line, weightless items, stale-state assertions) were
+            # re-raised. Either way the AutoAscend thread died, the arena only got ESC fallbacks
+            # and NLE aborted ~29% of games with a healthy character. Fixing those crash sources
+            # and recovering from every error like an AgentPanic (letting a turn pass when the
+            # same error repeats) keeps the games alive to gain more experience levels and depth.
+            if not isinstance(exc, AgentPanic):
+                self._drop_state_after_error()
             self.stats_logger.log_event('agent_panic')
             self.all_panics.append(exc)
             if self.verbose:
                 print(f'PANIC!!!! : {exc}')
+
+    def _drop_state_after_error(self):
+        # An unexpected error can leave caches half-updated (e.g. the items below the agent
+        # cleared but never re-read). The recovery ESC steps run update() before on_panic()
+        # gets a chance to reset them, so drop them here (without stepping) to have them rebuilt.
+        if self._inactivity_counter >= 199:
+            # the 'turn inactivity' guard fired: the strategies loop without the game advancing
+            self._pass_turn_after_error = True
+        self._inactivity_counter = 0
+        self._is_reading_message_or_popup = False
+        self.inventory.items_below_me = None
+        self.inventory.letters_below_me = None
+        self.inventory.engraving_below_me = None
+        self.inventory._previous_blstats = None
+        self.inventory.items.on_panic()
+        self.monster_tracker.on_panic()
 
     def main(self):
         try:
@@ -1763,18 +1833,35 @@ class Agent:
 
             last_step = self.step_count
             inactivity_counter = 0
+            forced_turns = 0
+            turn_after_forced = None
             while 1:
                 inactivity_counter += 1
                 if self.step_count != last_step:
                     inactivity_counter = 0
 
-                if inactivity_counter >= 5:
+                if inactivity_counter >= 5 or self._pass_turn_after_error:
                     try:
                         panics = sorted({p.args[0] for p in self.all_panics[-5:]})
                     except (TypeError, IndexError):
                         panics = 'UNKNOWN'
 
-                    raise RuntimeError(f'Cyclic Panic: {panics}')
+                    # The same error keeps recurring without the game advancing. Let a turn pass
+                    # (so e.g. a monster in the way or a temporary status can change) instead of
+                    # giving up at once, unless nothing else has advanced the game for too long.
+                    if turn_after_forced is None or self.blstats.time != turn_after_forced:
+                        forced_turns = 0
+                    if forced_turns >= 300:
+                        raise RuntimeError(f'Cyclic Panic: {panics}')
+                    forced_turns += 1
+                    inactivity_counter = 0
+                    self._pass_turn_after_error = False
+                    try:
+                        self.step(A.Command.SEARCH)
+                    except BaseException as e:
+                        self.handle_exception(e)
+                    turn_after_forced = self.blstats.time
+                    last_step = self.step_count
 
                 try:
                     try:

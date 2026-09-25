@@ -4,7 +4,7 @@ from itertools import product
 import numpy as np
 from scipy import signal
 
-from ..glyph import G
+from ..glyph import G, MON
 from ..utils import adjacent
 from .monster_utils import is_monster_faster, is_dangerous_monster, \
     ONLY_RANGED_SLOW_MONSTERS, EXPLODING_MONSTERS, WEAK_MONSTERS, consider_melee_only_ranged_if_hp_full
@@ -141,6 +141,10 @@ def _simulate_wand_path(agent, wand, monsters, y, x, dy, dx, range_left, hit_tar
             monster = 'pet'
             # For each monster hit, range decreases by 2.
             range_left -= 2
+        elif inside(agent, y, x) and agent.monster_tracker.peaceful_monster_mask[y, x]:
+            # a ray through a shopkeeper, priest or watchman turns them hostile
+            monster = 'peaceful'
+            range_left -= 2
         elif agent.blstats.y == y and agent.blstats.x == x:
             monster = 'self'
             range_left -= 2
@@ -178,6 +182,8 @@ def get_potential_wand_usages(agent, monsters, dy, dx):
             # print(y, x, monster, p)
             if monster == 'pet':
                 priority -= p * 20
+            elif monster == 'peaceful':
+                priority -= p * 100
             elif monster == 'self':
                 priority -= p * 30
             elif monster is not None:
@@ -246,7 +252,17 @@ def get_available_actions(agent, monsters):
                 priority -= 100
             dy = y - agent.blstats.y
             dx = x - agent.blstats.x
-            actions.append((priority, ('melee', dy, dx)))
+            # hypothesis: refusing all bare contact with cockatrices prevents
+            # instant petrification, while leaving ranged attacks and retreat
+            # available to both armed and unarmed characters.
+            bare_handed = agent.inventory.items.main_hand is None
+            bare_hands = agent.inventory.items.gloves is None
+            bare_feet = agent.inventory.items.boots is None
+            if ord(mon.mlet) == MON.S_COCKATRICE and bare_handed and bare_hands:
+                if not bare_feet:
+                    actions.append((priority, ('kick', dy, dx)))
+            else:
+                actions.append((priority, ('melee', dy, dx)))
 
     # ranged attack actions
     for dy, dx in product([-1, 0, 1], [-1, 0, 1]):
@@ -336,7 +352,7 @@ def get_priorities(agent):
     priority -= priority[agent.blstats.y, agent.blstats.x]
 
     actions = get_available_actions(agent, monsters)
-    if not any(a[1][0] in ('melee', 'ranged') for a in actions):
+    if not any(a[1][0] in ('melee', 'kick', 'ranged') for a in actions):
         actions.extend(goto_action(agent, priority, monsters))
     return priority, actions
 
