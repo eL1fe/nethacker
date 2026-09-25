@@ -2,7 +2,9 @@
   "schema": "nethackers.solution/v1",
   "name": "autoascend",
   "root": "autoascend",
-  "parents": [],
+  "parents": [
+    "prog_5d38fcd6af878a69c144fb8c6aa12231"
+  ],
   "influences": [],
   "entrypoint": "bot.py"
 }
