@@ -86,6 +86,10 @@ class Property:
         return self._condition(nh.BL_MASK_BLIND)
 
     @property
+    def stoned(self):
+        return self._condition(nh.BL_MASK_STONE)
+
+    @property
     def polymorph(self):
         if not nh.glyph_is_monster(self.agent.glyphs[self.agent.blstats.y, self.agent.blstats.x]):
             return False

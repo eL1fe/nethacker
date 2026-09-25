@@ -713,6 +713,9 @@ class GlobalLogic:
         return (
             self.current_strategy().repeat()
             .preempt(self.agent, [
+                self.agent.rest_strategy(),
+            ])
+            .preempt(self.agent, [
                 self.solve_sokoban_strategy()
                 .condition(lambda: self.milestone == Milestone.SOLVE_SOKOBAN and
                                    self.agent.current_level().dungeon_number == Level.SOKOBAN)

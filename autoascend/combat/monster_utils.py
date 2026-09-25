@@ -6,6 +6,12 @@ WEAK_MONSTERS = ['lichen', 'newt', 'shrieker', 'grid bug']
 WEIRD_MONSTERS = ['leprechaun', 'nymph']
 
 
+def ignores_elbereth(mon):
+    # @ (humans, elves, shopkeepers, watchmen) and minotaurs walk right over it
+    mlet = getattr(mon, 'mlet', None)
+    return mon.mname == 'minotaur' or (isinstance(mlet, str) and len(mlet) == 1 and ord(mlet) == 53)
+
+
 def is_monster_faster(agent, monster):
     _, y, x, mon, _ = monster
     # TOOD: implement properly

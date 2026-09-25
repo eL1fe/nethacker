@@ -609,7 +609,8 @@ class Agent:
         level.seen[mask] = True
         level.walkable[mask & (level.objects == -1)] = True
 
-        mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED, G.BARS)
+        # trees (Monk quest home, some special levels) block movement like bars
+        mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED, G.BARS, G.TREE)
         level.seen[mask] = True
         level.objects[mask] = self.glyphs[mask]
         level.walkable[mask] = False
@@ -1433,6 +1434,20 @@ class Agent:
     @Strategy.wrap
     def emergency_strategy(self):
 
+        # a cockatrice's touch or hiss starts delayed stoning: a few turns to eat a lizard
+        # or acidic corpse, and prayer fixes it as major trouble even outside the safe window
+        if self.character.prop.stoned:
+            for item in flatten_items(self.inventory.items):
+                if item.is_corpse() and item.monster_id in \
+                        [MON.from_name(n) - nh.GLYPH_MON_OFF for n in ['lizard', 'acid blob']]:
+                    yield True
+                    self.inventory.eat(item, smart=False)
+                    return
+            if self.last_prayer_turn is None or self.blstats.time - self.last_prayer_turn > 5:
+                yield True
+                self.pray()
+                return
+
         if self.blstats.experience_level >= 8:
             if self.should_cast_extra_heal():
                 yield True
@@ -1537,7 +1552,10 @@ class Agent:
         # terminal combat deaths into survival == more XP == more score. Because it triggers only in
         # this otherwise-fatal, resource-empty state, resourced/healthy runs never reach it.
         if self.inventory.engraving_below_me.lower() != 'elbereth' and self.can_engrave() and \
-                (self.blstats.hitpoints < 1 / 5 * self.blstats.max_hitpoints or self.blstats.hitpoints < 5):
+                (self.blstats.hitpoints < 1 / 5 * self.blstats.max_hitpoints or self.blstats.hitpoints < 5) and \
+                not any(combat.monster_utils.ignores_elbereth(mon) and
+                        max(abs(my - self.blstats.y), abs(mx - self.blstats.x)) <= 1
+                        for _, my, mx, mon, _ in self.get_visible_monsters()):
             yield True
             self.engrave('Elbereth')
             for _ in range(8):
@@ -1547,6 +1565,25 @@ class Agent:
             return
 
         yield False
+
+    @utils.debug_log('rest')
+    @Strategy.wrap
+    def rest_strategy(self):
+        # a Monk that walks into the next room at a third of its HP meets the next pack
+        # (elves, leocrottas) with no margin; with nothing hostile in sight, rest first
+        if self.character.role != Character.MONK or \
+                self.blstats.hitpoints >= 0.6 * self.blstats.max_hitpoints or \
+                self.blstats.hunger_state >= Hunger.HUNGRY or \
+                self.get_visible_monsters():
+            yield False
+            return
+        yield True
+        start = self.blstats.time
+        while self.blstats.hitpoints < 0.9 * self.blstats.max_hitpoints and \
+                self.blstats.hunger_state < Hunger.HUNGRY and \
+                not self.get_visible_monsters() and \
+                self.blstats.time - start < 400:
+            self.search(10)
 
     @utils.debug_log('proactive_sleep')
     @Strategy.wrap

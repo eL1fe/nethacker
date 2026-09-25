@@ -6,7 +6,7 @@ from scipy import signal
 
 from ..glyph import G, MON
 from ..utils import adjacent
-from .monster_utils import is_monster_faster, is_dangerous_monster, \
+from .monster_utils import is_monster_faster, is_dangerous_monster, ignores_elbereth, \
     ONLY_RANGED_SLOW_MONSTERS, EXPLODING_MONSTERS, WEAK_MONSTERS, consider_melee_only_ranged_if_hp_full
 from .movement_priority import draw_monster_priority_positive, draw_monster_priority_negative
 from .utils import wielding_ranged_weapon, line_dis_from, inside
@@ -212,7 +212,7 @@ def elbereth_action(agent, monsters):
     adj_monsters_count = 0
     for monster in monsters:
         _, my, mx, mon, _ = monster
-        if mon.mname in ONLY_RANGED_SLOW_MONSTERS:
+        if mon.mname in ONLY_RANGED_SLOW_MONSTERS or ignores_elbereth(mon):
             continue
         if not adjacent((my, mx), (agent.blstats.y, agent.blstats.x)):
             continue

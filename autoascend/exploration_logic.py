@@ -275,6 +275,9 @@ class ExplorationLogic:
             # kicking down the locked door and provoking a lethal shopkeeper.
             engraving = ''.join(c for c in self.agent.inventory.engraving_below_me.lower() if c.isalpha())
             closed_shop = difflib.SequenceMatcher(None, engraving, 'closedforinventory').ratio() >= 0.55
+            # the engraving is outside; a character that fell into a closed shop sees only the
+            # shopkeeper, and breaking the shop door from inside is just as fatal
+            closed_shop = closed_shop or utils.isin(self.agent.glyphs, G.SHOPKEEPER).any()
             for py, px in self.agent.neighbors(self.agent.blstats.y, self.agent.blstats.x, diagonal=False):
                 if (self.agent.current_level().door_open_count[py, px] < door_open_count or
                         (kick_doors and not closed_shop)) and \
