@@ -1,9 +1,11 @@
 # Our contributions (eL1fe)
 
-This bot builds on AutoAscend and on daglar-dragomirov's dive bot (see `parents` and
-`influences` in `nethackers.solution.json`). These changes originated here:
+This build is Komershan's bot at `github.com/Komershan/nethacker@8e0e320501ad2b70f8d912e3e555d4f1e59f786e` (its `parents`) with eL1fe's all-role
+fixes on top. Everything else, and the credit for it, belongs to Komershan and the bots listed in
+`influences`.
 
-**All roles**
+Changes that originated in github.com/eL1fe/nethacker:
+
 - Run AutoAscend with `panic_on_errors=True`: an assertion no longer kills the agent thread and
   stalls the episode until the no-progress timeout; errors go through AutoAscend's own panic recovery.
 - Drop Sokoban instead of crashing when the solver's map desyncs from the real level.
@@ -16,11 +18,5 @@ This bot builds on AutoAscend and on daglar-dragomirov's dive bot (see `parents`
 - Cure delayed stoning with a lizard or acid blob corpse, or by praying.
 - Skip Elbereth against `@` and minotaurs, who ignore it.
 
-**Monk**
-- Cast the healing spell a third of Monks start with.
-- Grind to Xp 8 before the Mines pick hunt and digging (Xp 5 Monks died to Mines packs).
-- Rest to 90% HP before exploring when nothing hostile is in sight.
-- Pray when Weak from hunger once the prayer timeout has surely expired (the pet eats most corpses on the long Dlvl 1 grind).
-
-The `submit` branch of github.com/eL1fe/nethacker records when each change was first published
-(Monk healing and the cockatrice guard: ff8e491; crash fixes: 6585733).
+First published on the `submit` branch of github.com/eL1fe/nethacker (crash fixes: 6585733;
+the rest: ff8e491, 08db7c6, 02c405e).
