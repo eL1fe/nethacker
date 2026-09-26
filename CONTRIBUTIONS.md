@@ -1,7 +1,7 @@
 # Our contributions (eL1fe)
 
-This build is Komershan's bot at `github.com/Komershan/nethacker@8e0e320501ad2b70f8d912e3e555d4f1e59f786e` (its `parents`) with eL1fe's all-role
-fixes on top. Everything else, and the credit for it, belongs to Komershan and the bots listed in
+This build is daglar-dragomirov's bot at `github.com/daglar-dragomirov/nethacker@a07f9767e0685d698f275c817bfc6df8b018ca66` (its `parents`) with eL1fe's all-role
+fixes on top. Everything else, and the credit for it, belongs to daglar-dragomirov and the bots listed in
 `influences`.
 
 Changes that originated in github.com/eL1fe/nethacker:

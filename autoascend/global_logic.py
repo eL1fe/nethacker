@@ -164,15 +164,11 @@ class Milestone(IntEnum):
 EARLY_DIG_XL = 5
 # turns a non-gnome, non-dwarf spends hunting the Mines' dwarves for a pick-axe after the Dlvl 1
 # grind before it gives up and dives by the stairs; 0 disables the hunt
-PICK_HUNT_TURNS = 3000
+PICK_HUNT_TURNS = 0
 # experience level the Dlvl 1 grind stops at before the deep phase begins
-# hypothesis: leaving Dlvl 1 at Xp 5 (~45 max HP) sends rogues, knights and dwarvish valkyries into
-# the Mines pick hunt / stair dive underpowered: traces show them dying within 1-3k turns of
-# leaving to gnome-lord wands, rothes, werejackal + killer bee packs, banking only Xp 5-6
-# (0.03-0.04). Grinding the safe first floor on to Xp 8 banks 0.075 by itself before any risk is
-# taken, and the extra HP/to-hit carries the later dive deeper (monster difficulty follows depth).
-# A character that already carries a pick still digs from EARLY_DIG_XL.
 GRIND_XL = 8
+# gnomes and dwarves walk the peaceful Mines to Mines' End before diving the main dungeon
+MINES_FOLK_ROUTE = False
 
 
 class GlobalLogic:
@@ -553,7 +549,12 @@ class GlobalLogic:
         while 1:
             explore_stairs_condition = lambda: False
             if self.milestone == Milestone.BE_ON_FIRST_LEVEL:
-                condition = lambda: self.agent.blstats.experience_level >= GRIND_XL
+                # Dlvl 1 has few monsters and fewer corpses: a grind that runs out of food starves
+                # there, fainting in front of the next pack of jackals. Hungry with nothing left to
+                # eat, move on down where corpses (and experience) come faster.
+                condition = lambda: self.agent.blstats.experience_level >= GRIND_XL or \
+                    (self.agent.blstats.hunger_state >= Hunger.HUNGRY and
+                     self.agent.inventory.items.total_nutrition() == 0)
                 # explore_stairs_condition = lambda: self.agent.inventory.items.total_nutrition() == 0 and \
                 #                                    self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY
                 level = (Level.DUNGEONS_OF_DOOM, 1)
@@ -627,9 +628,11 @@ class GlobalLogic:
                 # dungeon. Dwarves and gnomes find those dwarves peaceful, so they skip the hunt and
                 # instead walk the peaceful Mines straight to Mines' End (Dlvl 10-13), skipping the
                 # long and risky Sokoban detour, before diving the main dungeon.
-                mines_folk = self.agent.character.race in (Character.GNOME, Character.DWARF)
-                if self.milestone == Milestone.BE_ON_FIRST_LEVEL and not mines_folk:
-                    if PICK_HUNT_TURNS > 0:
+                race = self.agent.character.race
+                mines_folk = MINES_FOLK_ROUTE and race in (Character.GNOME, Character.DWARF)
+                if self.milestone == Milestone.BE_ON_FIRST_LEVEL and race != Character.GNOME and \
+                        not mines_folk:
+                    if PICK_HUNT_TURNS > 0 and race != Character.DWARF:
                         self._pick_hunt_start = self.agent.blstats.time
                         self.milestone = Milestone.FIND_GNOMISH_MINES
                     else:
@@ -675,12 +678,20 @@ class GlobalLogic:
                     .until(self.agent, lambda: (self.agent.blstats.y, self.agent.blstats.x) == (y, x))
                 )
 
+            # The stock plan explores every level to exhaustion before moving on. On the huge dark
+            # Mines levels that never finishes: a Valkyrie that got its pick-axe on Mines level 1
+            # explored it for 9000 turns instead of walking up to the main dungeon to dig. When
+            # diving, skip the exhaustive pass and head for the level the plan wants.
+            def diving():
+                return self.milestone in (Milestone.GO_DOWN, Milestone.FIND_MINES_END) or \
+                    (self.milestone == Milestone.FIND_MINETOWN and self._pick_hunt_start is None)
+
             step_count_before = self.agent.step_count
             (
                 self.agent.exploration.go_to_level_strategy(*level, go_to_strategy, exploration_strategy(None))
                 .before(exploration_strategy(None))#.before(self.agent.exploration.patrol())
                 .preempt(self.agent, [
-                    exploration_strategy(0),
+                    exploration_strategy(0).condition(lambda: not diving()),
                     exploration_strategy(None).until(
                         self.agent, lambda: self.agent.blstats.hitpoints >= 0.8 * self.agent.blstats.max_hitpoints)
                 ])
@@ -742,6 +753,9 @@ class GlobalLogic:
             ])
             .preempt(self.agent, [
                 self.agent.emergency_strategy(),
+            ])
+            .preempt(self.agent, [
+                self.agent.read_magic_mapping(),
             ])
             .preempt(self.agent, [
                 self.agent.dig_down(),

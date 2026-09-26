@@ -26,19 +26,6 @@ BLStats = namedtuple('BLStats',
                      'x y strength_percentage strength dexterity constitution intelligence wisdom charisma score hitpoints max_hitpoints depth gold energy max_energy armor_class monster_level experience_level experience_points time hunger_state carrying_capacity dungeon_number level_number prop_mask alignment')
 
 
-# a hunger prayer waits this many turns after the previous prayer: a timeout drawn from rnz(350)
-# is still above the major-trouble limit (200) ~7% of the time after 900 turns, ~2.5% after 1200
-HUNGER_PRAYER_GAP = 1200
-# ...unless the character has been fainting this long (hunger then drops at 1/10 the rate)
-FAINTING_PRAYER_DEADLINE = 300
-# ...or as soon as a hostile that can move shows up this close while the character is Fainting,
-# provided at least this many turns have passed since the previous prayer
-THREAT_PRAYER_GAP = 950
-THREAT_PRAYER_DISTANCE = 6
-PRAYER_FAILED_MESSAGES = ('is displeased', 'Thou hast angered me', 'Thou art arrogant', 'Thou hast strayed',
-                          'Thou durst', 'relearn thy lessons', 'is bummed')
-
-
 class Agent:
     def __init__(self, env, seed=0, verbose=False, panic_on_errors=False):
         self.env = env
@@ -71,8 +58,6 @@ class Agent:
         self.last_bfs_dis = None
         self.last_bfs_step = None
         self.last_prayer_turn = None
-        self.prayer_failed = False  # the god was angered: every later prayer only smites again
-        self._fainting_since = None
         self._monk_meat_meals = 0
         self._previous_glyphs = None
         self._last_turn = -1
@@ -95,8 +80,7 @@ class Agent:
 
         self.last_cast_fail_turn = defaultdict(lambda: -float('inf'))
         self._pick_dig_attempts = dict()
-        self._undiggable_levels = set()  # level keys whose floor refused a dig ("too hard to dig in")
-        self._mines_bottom_found = False  # Mines' End reached: no more digging in the Mines
+        self._mapped_levels = set()
 
         self.stats_logger = StatsLogger()
 
@@ -751,11 +735,16 @@ class Agent:
             self.stats_logger.log_event('container_untrap_fail')
             return self.message
 
+    def critically_low_hp(self):
+        """NetHack 3.6 pray.c critically_low_hp(): low HP counts as major trouble."""
+        hp, max_hp, level = self.blstats.hitpoints, self.blstats.max_hitpoints, self.blstats.experience_level
+        max_hp = min(max_hp, 15 * level)
+        divisor = 5 if level <= 5 else 6 if level <= 13 else 7 if level <= 21 else 8 if level <= 29 else 9
+        return hp <= 5 or hp * divisor <= max_hp
+
     def is_safe_to_pray(self, limit=500):
         # the prayer timeout starts at 300 and drops by one a turn; major trouble is fixed once it is
         # at most 200, so the first prayer is safe from about turn 100 (not 300: a diver is long dead)
-        if self.prayer_failed:
-            return False
         return (
                 (self.last_prayer_turn is None and self.blstats.time > 110) or
                 (self.last_prayer_turn is not None and self.blstats.time - self.last_prayer_turn > limit)
@@ -764,8 +753,6 @@ class Agent:
     def pray(self):
         self.step(A.Command.PRAY)
         self.last_prayer_turn = self.blstats.time
-        if any(s in self.message for s in PRAYER_FAILED_MESSAGES):
-            self.prayer_failed = True
         # TODO: return value
         return True
 
@@ -1156,7 +1143,7 @@ class Agent:
                 self.character.parse_enhance_view()
                 # only parse spells in the deep phase so the early level-1 grind (and its RNG) is
                 # left exactly as the parent plays it; this is what keeps the strong runs intact
-                if self.blstats.experience_level >= 8:
+                if self.blstats.experience_level >= 8 or self.character.role in (Character.WIZARD, Character.MONK):
                     self.character.parse_spellcast_view()
 
             move_priority_heatmap, actions = combat.fight_heur.get_priorities(self)
@@ -1164,11 +1151,10 @@ class Agent:
 
             if self.character.prop.polymorph:
                 actions = list(filter(lambda x: x[1][0] != 'ranged', actions))
-
             actions = [a for a in actions if not self._touch_petrifies(a[1])]
 
             if allow_attack_all:
-                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap')]
+                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap', 'force_bolt')]
                 if attack_actions:
                     actions = attack_actions
 
@@ -1237,6 +1223,11 @@ class Agent:
                 fired = self.fire(ammo, dir)
                 assert fired, (ammo, dir)
                 return wait_counter
+
+        elif best_action[0] == 'force_bolt':
+            _, dy, dx = best_action
+            self.cast('force bolt', direction=(dy, dx))
+            return wait_counter
 
         elif best_action[0] == 'elbereth':
             assert self.inventory.engraving_below_me.lower() != 'elbereth'
@@ -1424,7 +1415,8 @@ class Agent:
 
     def should_cast_heal(self):
         # TODO: consider casting for other classes
-        if self.character.role != self.character.HEALER:
+        # a third of Monks start with the healing spellbook
+        if self.character.role not in (self.character.HEALER, self.character.MONK):
             return False
         if 'healing' not in self.character.known_spells:
             return False
@@ -1468,13 +1460,8 @@ class Agent:
                 self.pray()
                 return
 
-        if self.blstats.hunger_state >= Hunger.FAINTING:
-            if self._fainting_since is None:
-                self._fainting_since = self.blstats.time
-        else:
-            self._fainting_since = None
 
-        if self.blstats.experience_level >= 8:
+        if self.blstats.experience_level >= 8 or self.character.role == Character.MONK:
             if self.should_cast_extra_heal():
                 yield True
                 self.cast('extra healing', direction=(0, 0))
@@ -1549,44 +1536,17 @@ class Agent:
                     self.zap(sleep_wand, direction)
                     return
 
-        # hypothesis: prayer is the Dlvl 1 grind's food supply (a hunger prayer every ~1000 turns for
-        # 15-20k turns), and traces show that is what ends most grinds: the bot prays at the first
-        # faint, ~900-1000 turns after the previous prayer, while the rnz(350) prayer timeout has a
-        # long tail -- about 1 in 10 such prayers come too soon, the god is angered (Luck -3, anger),
-        # and every later prayer (re-tried each 400 turns) smites again (lost levels) while the
-        # character faints over and over until a newt, rat or bat kills it. Waiting until
-        # HUNGER_PRAYER_GAP turns have passed cuts that failure rate to ~2-3%; fainting-phase
-        # hunger drops at a tenth of the rate while unconscious, so starvation is still far away,
-        # and the helpless fainting spells are spent standing on Elbereth, which the grind's
-        # animals and humanoids respect. After a failed prayer the bot no longer prays at all.
-        hunger_prayer_due = self.blstats.hunger_state >= Hunger.FAINTING and (
-                self.last_prayer_turn is None or
-                self.blstats.time - self.last_prayer_turn >= HUNGER_PRAYER_GAP or
-                self.blstats.time - self._fainting_since >= FAINTING_PRAYER_DEADLINE or
-                self.blstats.hitpoints * 2 < self.blstats.max_hitpoints or
-                self._fainting_threat_prayer_due())
-        # low HP is only "major trouble" to the god at HP <= 5 or HP <= max/7 (pray.c in_trouble);
-        # above that the prayer is answered "displeased", fixes nothing and burns the timeout
+        # Pray exactly when the god sees major trouble (pray.c critically_low_hp): praying above
+        # it is answered "displeased" with -3 Luck and an angrier god, below it the character may
+        # already be dead. Hunger is major trouble from Weak on; waiting for Fainting left long
+        # Dlvl 1 grinds passing out between packs of jackals that ate them while unconscious.
         if (
-                (self.is_safe_to_pray(500) and
-                 (self.blstats.hitpoints * 7 <= self.blstats.max_hitpoints or self.blstats.hitpoints <= 5))
-                or (self.is_safe_to_pray(400) and hunger_prayer_due)
+                (self.is_safe_to_pray(500) and self.critically_low_hp())
+                or (self.is_safe_to_pray(400) and self.blstats.hunger_state >= Hunger.WEAK)
         ):
             yield True
             self.pray()
             return
-
-        if self.blstats.hunger_state >= Hunger.FAINTING and not self.prayer_failed and \
-                not hunger_prayer_due and not self._has_food_in_reach():
-            if self.inventory.engraving_below_me.lower() != 'elbereth':
-                if self.can_engrave():
-                    yield True
-                    self.engrave('Elbereth')
-                    return
-            else:
-                yield True
-                self.search(5)
-                return
 
         # standing on a down staircase at crisis HP with prayer spent: take it. Only adjacent
         # monsters follow, the new level is a fresh start, and the depth is banked either way.
@@ -1704,6 +1664,29 @@ class Agent:
         direction = self.calc_direction(y0, x0, best[1], best[2], allow_nonunit_distance=True)
         self.zap(sleep_wand, direction)
 
+    @utils.debug_log('read_magic_mapping')
+    @Strategy.wrap
+    def read_magic_mapping(self):
+        # Tourists start with scrolls of magic mapping; while diving, a level whose down
+        # staircase is still unknown is mapped at once instead of explored room by room.
+        level = self.current_level()
+        if self.global_logic.milestone.name != 'GO_DOWN' or                 level.dungeon_number != Level.DUNGEONS_OF_DOOM or                 level.key() in self._mapped_levels or level.get_stairs(down=True):
+            yield False
+            return
+        scroll = None
+        for item in flatten_items(self.inventory.items):
+            if item.category == nh.SCROLL_CLASS and item.is_unambiguous() and                     item.object.name == 'magic mapping' and item.status != Item.CURSED:
+                scroll = item
+                break
+        if scroll is None:
+            yield False
+            return
+        yield True
+        self._mapped_levels.add(level.key())
+        with self.atom_operation():
+            self.step(A.Command.READ)
+            self.type_text(self.inventory.items.get_letter(scroll))
+
     def pick_for_digging(self):
         for item in flatten_items(self.inventory.items):
             if item.is_unambiguous() and item.objs[0].name in ('pick-axe', 'dwarvish mattock')                     and item.status != Item.CURSED:
@@ -1732,20 +1715,8 @@ class Agent:
         if self.character.prop.polymorph:
             yield False
             return
-        # hypothesis: the non-gnome pick hunt ends in the upper Mines (Dlvl 3-5), and a character that
-        # takes a pick-axe off a dwarf there then has to walk back up through hostile gnome packs to
-        # the Dungeons of Doom before it may dig; traces show rogues dying on that walk with the pick
-        # in their pack, banking only Xp 5-7 (~0.04). Digging straight down the Mines from where the
-        # pick was found reaches Mines' End (Dlvl 10-13, worth 0.13-0.25) in a few hundred turns.
-        # Mines' End has an undiggable bottom ("too hard to dig in"), which ends all Mines digging
-        # so the walk back up to the main dungeon (and its own dig) is not undone by falling back.
-        if self.current_level().dungeon_number not in (Level.DUNGEONS_OF_DOOM, Level.GNOMISH_MINES):
-            yield False
-            return
-        if self.current_level().dungeon_number == Level.GNOMISH_MINES and self._mines_bottom_found:
-            yield False
-            return
-        if self.current_level().key() in self._undiggable_levels:
+        # only the main dungeon: the Mines bottom out at Dlvl 10-13, the Dungeons of Doom at Medusa
+        if self.current_level().dungeon_number != Level.DUNGEONS_OF_DOOM:
             yield False
             return
         # stay safe: let fight2 / emergency_strategy handle threats before we spend turns digging
@@ -1766,7 +1737,6 @@ class Agent:
         if wand is not None:
             yield True
             self.zap(wand, '>')
-            self._check_undiggable_floor()
             return
 
         # hypothesis: a wand of digging is rare and runs dry after a few levels, but pick-axes and
@@ -1803,50 +1773,10 @@ class Agent:
             self.type_text(self.inventory.items.get_letter(pick))
             if 'direction' in self.message and '>' in self.message:
                 self.direction('>')
-                self._check_undiggable_floor()
             else:
                 self._pick_dig_attempts[key] = 8
                 if 'direction' in self.message:
                     self.step(A.Command.ESC)
-
-    def _check_undiggable_floor(self):
-        if 'too hard to dig' in self.message:
-            self._undiggable_levels.add(self.current_level().key())
-            if self.current_level().dungeon_number == Level.GNOMISH_MINES:
-                self._mines_bottom_found = True
-
-    def _fainting_threat_prayer_due(self):
-        # hypothesis: every Dlvl 1 grind death traced (kni s0, rog-orc s1/s10, rog-hum s5) is the same:
-        # the Fainting vigil waits for HUNGER_PRAYER_GAP (1200) turns after the last prayer, a newt,
-        # rat, bat or zombie wanders in, and the character -- unconscious for most of the next turns,
-        # its dust Elbereth scuffed -- is bitten from full HP to death a few dozen turns before the
-        # prayer would come (the "HP < max/2" trigger never fires: the character cannot act while
-        # fainted). Fainting only starts 900-1200 turns after a prayer, where a prayer comes too soon
-        # just ~3-6% of the time (rnz(350) tail), while a monster next to a fainting character is
-        # nearly always fatal. So pay the small prayer risk exactly when the danger shows up: pray at
-        # once when a hostile mobile monster comes within THREAT_PRAYER_DISTANCE during the vigil.
-        if self.last_prayer_turn is None or \
-                self.blstats.time - self.last_prayer_turn < THREAT_PRAYER_GAP:
-            return False
-        for _, y, x, permonst, _ in self.get_visible_monsters():
-            if getattr(permonst, 'mmove', 12) == 0:
-                continue
-            if max(abs(y - self.blstats.y), abs(x - self.blstats.x)) <= THREAT_PRAYER_DISTANCE:
-                return True
-        return False
-
-    def _has_food_in_reach(self):
-        for item in flatten_items(self.inventory.items):
-            if item.category == nh.FOOD_CLASS and \
-                    item.objs[0].name != 'sprig of wolfsbane' and \
-                    (not item.is_corpse() or
-                     item.monster_id in [MON.from_name(n) - nh.GLYPH_MON_OFF for n in ['lizard', 'lichen']]):
-                return True
-        for corpse_mapping in self.current_level().corpses_to_eat.values():
-            for monster_id, corpse_age in corpse_mapping.items():
-                if self._is_corpse_editable(monster_id, corpse_age):
-                    return True
-        return False
 
     @utils.debug_log('eat_from_inventory')
     @Strategy.wrap

@@ -3,12 +3,12 @@
   "name": "autoascend-dive",
   "root": "autoascend",
   "parents": [
-    "github.com/Komershan/nethacker@8e0e320501ad2b70f8d912e3e555d4f1e59f786e"
+    "github.com/daglar-dragomirov/nethacker@a07f9767e0685d698f275c817bfc6df8b018ca66"
   ],
   "influences": [
     "github.com/Komershan/nethacker@132b7c2d662f40bf7f86335c98709025b8b23967",
     "github.com/DT6A/nethacker@464e1662a4cb60567c7946d2d952278c64eefe84",
-    "github.com/Komershan/nethacker@8e0e320501ad2b70f8d912e3e555d4f1e59f786e",
+    "github.com/daglar-dragomirov/nethacker@a07f9767e0685d698f275c817bfc6df8b018ca66",
     "github.com/eL1fe/nethacker@6585733dcf31afb57bb0b113cc735f9991cfd968",
     "github.com/eL1fe/nethacker@02c405e7a932b8cc11308bcc4c68bca887081a85"
   ],
