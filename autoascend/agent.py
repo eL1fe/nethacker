@@ -1529,6 +1529,10 @@ class Agent:
                 (self.is_safe_to_pray(500) and
                  (self.blstats.hitpoints * 7 <= self.blstats.max_hitpoints or self.blstats.hitpoints <= 5))
                 or (self.is_safe_to_pray(400) and self.blstats.hunger_state >= Hunger.FAINTING)
+                # Weak is already major trouble; pray for it only when the timeout has surely run
+                # out, so the prayer is not spent (or angers the god) right before an HP crisis
+                or (self.character.role == Character.MONK and self.is_safe_to_pray(1000) and
+                    self.blstats.hunger_state >= Hunger.WEAK)
         ):
             yield True
             self.pray()
@@ -1704,8 +1708,10 @@ class Agent:
         if self.current_level().dungeon_number != Level.DUNGEONS_OF_DOOM:
             yield False
             return
-        # stay safe: let fight2 / emergency_strategy handle threats before we spend turns digging
-        if self.blstats.hitpoints < 0.7 * self.blstats.max_hitpoints:
+        # stay safe: let fight2 / emergency_strategy handle threats before we spend turns digging.
+        # A Monk digs anyway: with nothing adjacent, a hole is both the escape from ranged
+        # attackers Elbereth does not stop (breath, arrows, wands) and one more level banked
+        if self.blstats.hitpoints < 0.7 * self.blstats.max_hitpoints and self.character.role != Character.MONK:
             yield False
             return
         for _, my, mx, _, _ in self.get_visible_monsters():
