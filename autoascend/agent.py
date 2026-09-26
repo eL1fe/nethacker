@@ -13,7 +13,7 @@ from . import utils
 from .character import Character
 from .exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from .exploration_logic import ExplorationLogic
-from .global_logic import GlobalLogic, EARLY_DIG_XL
+from .global_logic import GlobalLogic, early_dig_xl
 from .glyph import MON, C, Hunger, G, SHOP
 from .item import Item, flatten_items
 from .item.inventory import Inventory
@@ -80,7 +80,6 @@ class Agent:
 
         self.last_cast_fail_turn = defaultdict(lambda: -float('inf'))
         self._pick_dig_attempts = dict()
-        self._mapped_levels = set()
 
         self.stats_logger = StatsLogger()
 
@@ -735,13 +734,6 @@ class Agent:
             self.stats_logger.log_event('container_untrap_fail')
             return self.message
 
-    def critically_low_hp(self):
-        """NetHack 3.6 pray.c critically_low_hp(): low HP counts as major trouble."""
-        hp, max_hp, level = self.blstats.hitpoints, self.blstats.max_hitpoints, self.blstats.experience_level
-        max_hp = min(max_hp, 15 * level)
-        divisor = 5 if level <= 5 else 6 if level <= 13 else 7 if level <= 21 else 8 if level <= 29 else 9
-        return hp <= 5 or hp * divisor <= max_hp
-
     def is_safe_to_pray(self, limit=500):
         # the prayer timeout starts at 300 and drops by one a turn; major trouble is fixed once it is
         # at most 200, so the first prayer is safe from about turn 100 (not 300: a diver is long dead)
@@ -882,7 +874,16 @@ class Agent:
                     (self.blstats.y, self.blstats.x)] = (level.key(), (expected_y, expected_x))
 
         else:
+            level = self.current_level()
+            my_y, my_x = self.blstats.y, self.blstats.x
             self.direction(dir)
+
+            # a doorway the map shows as doorless can still hold an (open or broken-looking) door;
+            # remember it or the diagonal-shortest path retries the same refused step forever
+            if "move diagonally into an intact doorway" in self.message:
+                level.no_diagonal[expected_y, expected_x] = True
+            if "move diagonally out of an intact doorway" in self.message:
+                level.no_diagonal[my_y, my_x] = True
 
             if self.blstats.y != expected_y or self.blstats.x != expected_x:
                 raise AgentPanic(f'agent position do not match after "move": '
@@ -970,7 +971,8 @@ class Agent:
 
         dis = utils.bfs(y, x,
                         walkable=walkable,
-                        walkable_diagonally=walkable & ~utils.isin(level.objects, G.DOORS) & (level.objects != -1),
+                        walkable_diagonally=walkable & ~utils.isin(level.objects, G.DOORS) & (level.objects != -1) &
+                                            ~level.no_diagonal,
                         can_squeeze=self.inventory.items.total_weight <= 600 and \
                                     self.current_level().dungeon_number != Level.SOKOBAN,
                         )
@@ -1143,7 +1145,7 @@ class Agent:
                 self.character.parse_enhance_view()
                 # only parse spells in the deep phase so the early level-1 grind (and its RNG) is
                 # left exactly as the parent plays it; this is what keeps the strong runs intact
-                if self.blstats.experience_level >= 8 or self.character.role in (Character.WIZARD, Character.MONK):
+                if self.blstats.experience_level >= 8:
                     self.character.parse_spellcast_view()
 
             move_priority_heatmap, actions = combat.fight_heur.get_priorities(self)
@@ -1151,10 +1153,11 @@ class Agent:
 
             if self.character.prop.polymorph:
                 actions = list(filter(lambda x: x[1][0] != 'ranged', actions))
+
             actions = [a for a in actions if not self._touch_petrifies(a[1])]
 
             if allow_attack_all:
-                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap', 'force_bolt')]
+                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap')]
                 if attack_actions:
                     actions = attack_actions
 
@@ -1223,11 +1226,6 @@ class Agent:
                 fired = self.fire(ammo, dir)
                 assert fired, (ammo, dir)
                 return wait_counter
-
-        elif best_action[0] == 'force_bolt':
-            _, dy, dx = best_action
-            self.cast('force bolt', direction=(dy, dx))
-            return wait_counter
 
         elif best_action[0] == 'elbereth':
             assert self.inventory.engraving_below_me.lower() != 'elbereth'
@@ -1414,7 +1412,6 @@ class Agent:
             yield False
 
     def should_cast_heal(self):
-        # TODO: consider casting for other classes
         # a third of Monks start with the healing spellbook
         if self.character.role not in (self.character.HEALER, self.character.MONK):
             return False
@@ -1446,6 +1443,7 @@ class Agent:
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
     def emergency_strategy(self):
+
         # a cockatrice's touch or hiss starts delayed stoning: a few turns to eat a lizard
         # or acidic corpse, and prayer fixes it as major trouble even outside the safe window
         if self.character.prop.stoned:
@@ -1460,8 +1458,7 @@ class Agent:
                 self.pray()
                 return
 
-
-        if self.blstats.experience_level >= 8 or self.character.role == Character.MONK:
+        if self.blstats.experience_level >= 8:
             if self.should_cast_extra_heal():
                 yield True
                 self.cast('extra healing', direction=(0, 0))
@@ -1536,13 +1533,16 @@ class Agent:
                     self.zap(sleep_wand, direction)
                     return
 
-        # Pray exactly when the god sees major trouble (pray.c critically_low_hp): praying above
-        # it is answered "displeased" with -3 Luck and an angrier god, below it the character may
-        # already be dead. Hunger is major trouble from Weak on; waiting for Fainting left long
-        # Dlvl 1 grinds passing out between packs of jackals that ate them while unconscious.
+        # low HP is only "major trouble" to the god at HP <= 5 or HP <= max/7 (pray.c in_trouble);
+        # above that the prayer is answered "displeased", fixes nothing and burns the timeout
         if (
-                (self.is_safe_to_pray(500) and self.critically_low_hp())
-                or (self.is_safe_to_pray(400) and self.blstats.hunger_state >= Hunger.WEAK)
+                (self.is_safe_to_pray(500) and
+                 (self.blstats.hitpoints * 7 <= self.blstats.max_hitpoints or self.blstats.hitpoints <= 5))
+                or (self.is_safe_to_pray(400) and self.blstats.hunger_state >= Hunger.FAINTING)
+                # Weak is already major trouble; pray for it only when the timeout has surely run
+                # out, so the prayer is not spent (or angers the god) right before an HP crisis
+                or (self.character.role == Character.MONK and self.is_safe_to_pray(1000) and
+                    self.blstats.hunger_state >= Hunger.WEAK)
         ):
             yield True
             self.pray()
@@ -1566,7 +1566,10 @@ class Agent:
         # terminal combat deaths into survival == more XP == more score. Because it triggers only in
         # this otherwise-fatal, resource-empty state, resourced/healthy runs never reach it.
         if self.inventory.engraving_below_me.lower() != 'elbereth' and self.can_engrave() and \
-                (self.blstats.hitpoints < 1 / 5 * self.blstats.max_hitpoints or self.blstats.hitpoints < 5):
+                (self.blstats.hitpoints < 1 / 5 * self.blstats.max_hitpoints or self.blstats.hitpoints < 5) and \
+                not any(combat.monster_utils.ignores_elbereth(mon) and
+                        max(abs(my - self.blstats.y), abs(mx - self.blstats.x)) <= 1
+                        for _, my, mx, mon, _ in self.get_visible_monsters()):
             yield True
             self.engrave('Elbereth')
             for _ in range(8):
@@ -1576,6 +1579,25 @@ class Agent:
             return
 
         yield False
+
+    @utils.debug_log('rest')
+    @Strategy.wrap
+    def rest_strategy(self):
+        # a Monk that walks into the next room at a third of its HP meets the next pack
+        # (elves, leocrottas) with no margin; with nothing hostile in sight, rest first
+        if self.character.role != Character.MONK or \
+                self.blstats.hitpoints >= 0.6 * self.blstats.max_hitpoints or \
+                self.blstats.hunger_state >= Hunger.HUNGRY or \
+                self.get_visible_monsters():
+            yield False
+            return
+        yield True
+        start = self.blstats.time
+        while self.blstats.hitpoints < 0.9 * self.blstats.max_hitpoints and \
+                self.blstats.hunger_state < Hunger.HUNGRY and \
+                not self.get_visible_monsters() and \
+                self.blstats.time - start < 400:
+            self.search(10)
 
     @utils.debug_log('proactive_sleep')
     @Strategy.wrap
@@ -1664,29 +1686,6 @@ class Agent:
         direction = self.calc_direction(y0, x0, best[1], best[2], allow_nonunit_distance=True)
         self.zap(sleep_wand, direction)
 
-    @utils.debug_log('read_magic_mapping')
-    @Strategy.wrap
-    def read_magic_mapping(self):
-        # Tourists start with scrolls of magic mapping; while diving, a level whose down
-        # staircase is still unknown is mapped at once instead of explored room by room.
-        level = self.current_level()
-        if self.global_logic.milestone.name != 'GO_DOWN' or                 level.dungeon_number != Level.DUNGEONS_OF_DOOM or                 level.key() in self._mapped_levels or level.get_stairs(down=True):
-            yield False
-            return
-        scroll = None
-        for item in flatten_items(self.inventory.items):
-            if item.category == nh.SCROLL_CLASS and item.is_unambiguous() and                     item.object.name == 'magic mapping' and item.status != Item.CURSED:
-                scroll = item
-                break
-        if scroll is None:
-            yield False
-            return
-        yield True
-        self._mapped_levels.add(level.key())
-        with self.atom_operation():
-            self.step(A.Command.READ)
-            self.type_text(self.inventory.items.get_letter(scroll))
-
     def pick_for_digging(self):
         for item in flatten_items(self.inventory.items):
             if item.is_unambiguous() and item.objs[0].name in ('pick-axe', 'dwarvish mattock')                     and item.status != Item.CURSED:
@@ -1709,7 +1708,7 @@ class Agent:
         # of depth and experience level, so a fresh character falls through levels faster than
         # the dungeon can catch up with it, and depth is worth far more than the Xp 8 it forgoes.
         if self.blstats.experience_level < 8 and not (
-                self.blstats.experience_level >= EARLY_DIG_XL and self.pick_for_digging() is not None):
+                self.blstats.experience_level >= early_dig_xl(self.character) and self.pick_for_digging() is not None):
             yield False
             return
         if self.character.prop.polymorph:
@@ -1719,8 +1718,10 @@ class Agent:
         if self.current_level().dungeon_number != Level.DUNGEONS_OF_DOOM:
             yield False
             return
-        # stay safe: let fight2 / emergency_strategy handle threats before we spend turns digging
-        if self.blstats.hitpoints < 0.7 * self.blstats.max_hitpoints:
+        # stay safe: let fight2 / emergency_strategy handle threats before we spend turns digging.
+        # A Monk digs anyway: with nothing adjacent, a hole is both the escape from ranged
+        # attackers Elbereth does not stop (breath, arrows, wands) and one more level banked
+        if self.blstats.hitpoints < 0.7 * self.blstats.max_hitpoints and self.character.role != Character.MONK:
             yield False
             return
         for _, my, mx, _, _ in self.get_visible_monsters():
