@@ -1,22 +1,10 @@
-# Our contributions (eL1fe)
+# Role router (eL1fe)
 
-This build is daglar-dragomirov's role router at `github.com/daglar-dragomirov/nethacker@5d0d455a1585271143aa47fbd5b44c2f6dae7d4b` (its `parents`), itself built on
-vkurenkov's jawfish and the bots listed in `influences`, with eL1fe's fixes on top. Everything else,
-and the credit for it, belongs to those authors.
+Every game is played by one complete bot written by others, chosen by the character's role.
+The engines are unmodified copies; all credit for them belongs to their authors (see `influences`). The routing table below, measured on eL1fe's held-out multi-role benchmark
+(paired games, fresh seeds), and the router itself are ours.
 
-Changes that originated in github.com/eL1fe/nethacker and are added here:
+Default engine: `dag` (github.com/eL1fe/nethacker@5fb52f1817758c8cbb2b9ee767c2e3a239b63d73)
 
-- Stop retrying armor that a welded two-handed weapon blocks (the retry loop passed no turn; a
-  Ranger stood on Dlvl 1 at Xp 8).
-- Do not retry swapping boots while a foot is held in a trap (same kind of loop). Found by our
-  `nethackers evolve` run.
-- Keep healing potions for real crises, and only when a prayer would not fix it now. Found by our
-  `nethackers evolve` run.
-- Never set off a gas spore next to a pet or a peaceful. Found by our `nethackers evolve` run.
-- Never offer a same-race corpse on an altar, whatever the alignment (chaotic characters summoned
-  Juiblex). Found by our `nethackers evolve` run.
-- Drop Sokoban when the solver's map desyncs; forget phantom altars; parse singular
-  `set of <color> dragon scales`; never touch a cockatrice bare-handed or kick it barefoot; cure
-  delayed stoning; treat trees as unwalkable.
-
-The `submit` branch of github.com/eL1fe/nethacker records when each change was first published.
+- Samurai: `jawfish` (github.com/vkurenkov/nethacker@f15bb8c8e01d905d1946e32bfd2558e17394eab6)
+- Tourist: `kefirski` (github.com/kefirski/nethacker@314507ee72fcedf3749b6e2b4d60330bc159e88f)

@@ -1,0 +1,7 @@
+{
+ "default": "dag",
+ "roles": {
+  "Samurai": "jawfish",
+  "Tourist": "kefirski"
+ }
+}

@@ -1,9 +1,9 @@
 {
   "schema": "nethackers.solution/v1",
-  "name": "el1fe-role-router",
-  "root": ".",
+  "name": "jawfish-router-el1fe-fixes",
+  "root": "autoascend",
   "parents": [
-    "github.com/eL1fe/nethacker@5fb52f1817758c8cbb2b9ee767c2e3a239b63d73"
+    "github.com/daglar-dragomirov/nethacker@5d0d455a1585271143aa47fbd5b44c2f6dae7d4b"
   ],
   "influences": [
     "github.com/DT6A/nethacker@59ce30c509ef568366fe846afeba03dede939339",
@@ -18,12 +18,7 @@
     "github.com/daglar-dragomirov/nethacker@5d0d455a1585271143aa47fbd5b44c2f6dae7d4b",
     "github.com/eL1fe/nethacker@6585733dcf31afb57bb0b113cc735f9991cfd968",
     "github.com/eL1fe/nethacker@dc2765b9a90074e2823521afb721b7ee16ef35a7",
-    "github.com/eL1fe/nethacker@087e92de74a607a34b0938d881268c66bdc08b71",
-    "github.com/eL1fe/nethacker@5fb52f1817758c8cbb2b9ee767c2e3a239b63d73",
-    "github.com/DT6A/nethacker@d956abff7baa169d549a8d12fa1d219412833b67",
-    "github.com/Komershan/nethacker@ddfd58642853498954a79134e525b98a5e248fbb",
-    "github.com/kefirski/nethacker@44e1e586cf4c6707b72b8d5238cb34311b615a01",
-    "github.com/vkurenkov/nethacker@ef6acf87e265f74600b914060f620d06117070a3"
+    "github.com/eL1fe/nethacker@087e92de74a607a34b0938d881268c66bdc08b71"
   ],
   "entrypoint": "bot.py"
 }
