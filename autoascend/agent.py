@@ -13,7 +13,7 @@ from . import utils
 from .character import Character
 from .exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
 from .exploration_logic import ExplorationLogic
-from .global_logic import GlobalLogic, early_dig_xl
+from .global_logic import GlobalLogic, EARLY_DIG_XL
 from .glyph import MON, C, Hunger, G, SHOP
 from .item import Item, flatten_items
 from .item.inventory import Inventory
@@ -80,6 +80,7 @@ class Agent:
 
         self.last_cast_fail_turn = defaultdict(lambda: -float('inf'))
         self._pick_dig_attempts = dict()
+        self._dig_engrave_attempts = dict()
 
         self.stats_logger = StatsLogger()
 
@@ -1412,8 +1413,8 @@ class Agent:
             yield False
 
     def should_cast_heal(self):
-        # a third of Monks start with the healing spellbook
-        if self.character.role not in (self.character.HEALER, self.character.MONK):
+        # TODO: consider casting for other classes
+        if self.character.role != self.character.HEALER:
             return False
         if 'healing' not in self.character.known_spells:
             return False
@@ -1443,7 +1444,6 @@ class Agent:
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
     def emergency_strategy(self):
-
         # a cockatrice's touch or hiss starts delayed stoning: a few turns to eat a lizard
         # or acidic corpse, and prayer fixes it as major trouble even outside the safe window
         if self.character.prop.stoned:
@@ -1457,6 +1457,7 @@ class Agent:
                 yield True
                 self.pray()
                 return
+
 
         if self.blstats.experience_level >= 8:
             if self.should_cast_extra_heal():
@@ -1539,10 +1540,6 @@ class Agent:
                 (self.is_safe_to_pray(500) and
                  (self.blstats.hitpoints * 7 <= self.blstats.max_hitpoints or self.blstats.hitpoints <= 5))
                 or (self.is_safe_to_pray(400) and self.blstats.hunger_state >= Hunger.FAINTING)
-                # Weak is already major trouble; pray for it only when the timeout has surely run
-                # out, so the prayer is not spent (or angers the god) right before an HP crisis
-                or (self.character.role == Character.MONK and self.is_safe_to_pray(1000) and
-                    self.blstats.hunger_state >= Hunger.WEAK)
         ):
             yield True
             self.pray()
@@ -1557,6 +1554,21 @@ class Agent:
             self.direction('>')
             return
 
+        # hypothesis: the rule above only fires when the character already stands on '>', yet
+        # most deaths past the grind (Xp 5-8 on Dlvl 2-6: soldier ants, rothes, unicorns,
+        # werejackals) happen a few squares from a known down staircase. Below half HP with a
+        # mobile hostile close by, walk towards a nearby known '>' and take it: only adjacent
+        # monsters follow, the new level usually gives rest_to_heal a quiet spot, and the extra
+        # depth is banked by the score even if the character dies later.
+        step = self._flee_downstairs_step()
+        if step is not None:
+            yield True
+            if step == '>':
+                self.direction('>')
+            else:
+                self.move(*step)
+            return
+
         # hypothesis: many runs die in melee at low XP (Xp5-7) across all four identities. This
         # Elbereth last resort sits at the very bottom of emergency_strategy -- below the healing
         # cast, healing potion, fruit juice and prayer -- so it only fires when the Healer is at
@@ -1566,10 +1578,7 @@ class Agent:
         # terminal combat deaths into survival == more XP == more score. Because it triggers only in
         # this otherwise-fatal, resource-empty state, resourced/healthy runs never reach it.
         if self.inventory.engraving_below_me.lower() != 'elbereth' and self.can_engrave() and \
-                (self.blstats.hitpoints < 1 / 5 * self.blstats.max_hitpoints or self.blstats.hitpoints < 5) and \
-                not any(combat.monster_utils.ignores_elbereth(mon) and
-                        max(abs(my - self.blstats.y), abs(mx - self.blstats.x)) <= 1
-                        for _, my, mx, mon, _ in self.get_visible_monsters()):
+                (self.blstats.hitpoints < 1 / 5 * self.blstats.max_hitpoints or self.blstats.hitpoints < 5):
             yield True
             self.engrave('Elbereth')
             for _ in range(8):
@@ -1580,24 +1589,65 @@ class Agent:
 
         yield False
 
-    @utils.debug_log('rest')
+    def _flee_downstairs_step(self, max_dist=12, threat_dist=5):
+        level = self.current_level()
+        if level.dungeon_number not in (Level.DUNGEONS_OF_DOOM, Level.GNOMISH_MINES) or \
+                level.level_number < 2:
+            return None
+        if self.blstats.hitpoints * 2 >= self.blstats.max_hitpoints:
+            return None
+        y, x = self.blstats.y, self.blstats.x
+        threats = [m for m in self.get_visible_monsters()
+                   if max(abs(m[1] - y), abs(m[2] - x)) <= threat_dist and
+                   m[3].mname not in combat.monster_utils.ONLY_RANGED_SLOW_MONSTERS]
+        if not threats:
+            return None
+        if level.objects[y, x] in G.STAIR_DOWN:
+            return '>'
+        dis = self.bfs()
+        stairs = [(sy, sx) for sy, sx in zip(*utils.isin(level.objects, G.STAIR_DOWN).nonzero())
+                  if 0 < dis[sy, sx] <= max_dist]
+        if not stairs:
+            return None
+        sy, sx = min(stairs, key=lambda p: dis[p])
+        ny, nx = self.path(y, x, sy, sx, dis=dis)[1]
+        if self.monster_tracker.monster_mask[ny, nx]:
+            return None
+        return ny, nx
+
+    def _can_rest(self):
+        if self.blstats.hitpoints * 2 >= self.blstats.max_hitpoints:
+            return False
+        if self.blstats.hunger_state >= Hunger.HUNGRY or self.character.prop.hallu:
+            return False
+        if self.current_level().shop[self.blstats.y, self.blstats.x]:
+            return False
+        for _, y, x, _, _ in self.get_visible_monsters():
+            if max(abs(y - self.blstats.y), abs(x - self.blstats.x)) <= 6:
+                return False
+        return True
+
+    @utils.debug_log('rest_to_heal')
     @Strategy.wrap
-    def rest_strategy(self):
-        # a Monk that walks into the next room at a third of its HP meets the next pack
-        # (elves, leocrottas) with no margin; with nothing hostile in sight, rest first
-        if self.character.role != Character.MONK or \
-                self.blstats.hitpoints >= 0.6 * self.blstats.max_hitpoints or \
-                self.blstats.hunger_state >= Hunger.HUNGRY or \
-                self.get_visible_monsters():
+    def rest_to_heal(self):
+        # hypothesis: the bot never rests -- after a fight it walks on (explores, takes stairs,
+        # digs) at whatever HP it has left, so the next monster (soldier ant, rothe, werejackal,
+        # giant bat) meets a half-dead character at Xp 5-8 on Dlvl 2-5, where most of the weak
+        # identities die. Below half HP with no hostile in sight and food to spare, stand on a
+        # dust Elbereth and search until HP is back to 90%. fight2/emergency/eating all preempt
+        # this, so a monster showing up interrupts the rest.
+        if not self._can_rest():
             yield False
-            return
         yield True
-        start = self.blstats.time
-        while self.blstats.hitpoints < 0.9 * self.blstats.max_hitpoints and \
-                self.blstats.hunger_state < Hunger.HUNGRY and \
-                not self.get_visible_monsters() and \
-                self.blstats.time - start < 400:
-            self.search(10)
+        level = self.current_level()
+        y, x = self.blstats.y, self.blstats.x
+        if self.inventory.engraving_below_me.lower() != 'elbereth' and self.can_engrave() and \
+                level.objects[y, x] not in G.STAIR_UP and level.objects[y, x] not in G.STAIR_DOWN and \
+                level.objects[y, x] not in G.ALTAR and level.objects[y, x] not in G.FOUNTAIN:
+            self.engrave('Elbereth')
+        while self.blstats.hitpoints * 10 < self.blstats.max_hitpoints * 9 and \
+                self.blstats.hunger_state < Hunger.HUNGRY:
+            self.search(5)
 
     @utils.debug_log('proactive_sleep')
     @Strategy.wrap
@@ -1686,6 +1736,11 @@ class Agent:
         direction = self.calc_direction(y0, x0, best[1], best[2], allow_nonunit_distance=True)
         self.zap(sleep_wand, direction)
 
+    @staticmethod
+    def _respects_elbereth(mon):
+        # @ (humans and elves) and minotaurs ignore Elbereth; so may whatever we cannot see
+        return mon.mname not in ('unknown', 'minotaur') and ord(mon.mlet) != MON.S_HUMAN
+
     def pick_for_digging(self):
         for item in flatten_items(self.inventory.items):
             if item.is_unambiguous() and item.objs[0].name in ('pick-axe', 'dwarvish mattock')                     and item.status != Item.CURSED:
@@ -1708,7 +1763,7 @@ class Agent:
         # of depth and experience level, so a fresh character falls through levels faster than
         # the dungeon can catch up with it, and depth is worth far more than the Xp 8 it forgoes.
         if self.blstats.experience_level < 8 and not (
-                self.blstats.experience_level >= early_dig_xl(self.character) and self.pick_for_digging() is not None):
+                self.blstats.experience_level >= EARLY_DIG_XL and self.pick_for_digging() is not None):
             yield False
             return
         if self.character.prop.polymorph:
@@ -1718,23 +1773,51 @@ class Agent:
         if self.current_level().dungeon_number != Level.DUNGEONS_OF_DOOM:
             yield False
             return
-        # stay safe: let fight2 / emergency_strategy handle threats before we spend turns digging.
-        # A Monk digs anyway: with nothing adjacent, a hole is both the escape from ranged
-        # attackers Elbereth does not stop (breath, arrows, wands) and one more level banked
-        if self.blstats.hitpoints < 0.7 * self.blstats.max_hitpoints and self.character.role != Character.MONK:
-            yield False
-            return
-        for _, my, mx, _, _ in self.get_visible_monsters():
-            if max(abs(my - self.blstats.y), abs(mx - self.blstats.x)) <= 1:
-                yield False
-                return
-
         wand = None
         for item in flatten_items(self.inventory.items):
             if item.is_wand() and item.is_unambiguous() and item.object.name == 'digging' \
                     and item.uses != 'no charges' and not str(item.uses).endswith(':0'):
                 wand = item
                 break
+
+        # hypothesis: a pick-axe dive dies in the ~20 turns it spends digging each hole at Xp 5-7 on
+        # Dlvl 8-14 (soldier ants, rothes, owlbears, trolls walk up and maul it), or after it stops
+        # digging below 70% HP and wanders the deep level instead. Dig under a dust Elbereth: it is
+        # engraved before starting and again once the pit is dug (digging the pit wipes it). Every
+        # monster but @ (humans, elves) and minotaurs then refuses to melee us, and since a scared
+        # monster does not even interrupt the dig occupation, the hole keeps going while they hover.
+        # So with Elbereth possible, keep digging with such monsters adjacent and at any HP (short of
+        # the prayer / healing-potion emergencies): every extra level banked is worth far more to
+        # the score than the HP a deep low-level character recovers wandering around.
+        shielded = wand is None and self.pick_for_digging() is not None and self.can_engrave()
+        adjacent = [m for m in self.get_visible_monsters()
+                    if max(abs(m[1] - self.blstats.y), abs(m[2] - self.blstats.x)) <= 1]
+        if shielded:
+            if any(not self._respects_elbereth(m[3]) for m in adjacent):
+                yield False
+                return
+            hp, max_hp = self.blstats.hitpoints, self.blstats.max_hitpoints
+            if (hp * 7 <= max_hp or hp <= 5) and self.is_safe_to_pray(500):
+                yield False
+                return
+            if (hp < max_hp / 3 or hp < 8) and any(
+                    item.is_unambiguous() and item.category == nh.POTION_CLASS and
+                    item.object.name in ['healing', 'extra healing', 'full healing']
+                    for item in flatten_items(self.inventory.items)):
+                yield False
+                return
+            if self.blstats.hunger_state >= Hunger.HUNGRY:
+                yield False
+                return
+        else:
+            # stay safe: let fight2 / emergency_strategy handle threats before we spend turns digging
+            if self.blstats.hitpoints < 0.7 * self.blstats.max_hitpoints:
+                yield False
+                return
+            if adjacent:
+                yield False
+                return
+
         if wand is not None:
             yield True
             self.zap(wand, '>')
@@ -1762,9 +1845,22 @@ class Agent:
         # fall through, a wielding problem, ...) so this can never loop forever
         key = (self.current_level().key(), y, x)
         attempts = self._pick_dig_attempts.get(key, 0)
-        if attempts >= 8:
+        # under Elbereth the dig is still interrupted by monsters coming into view, so allow more
+        if attempts >= (16 if shielded else 8):
             yield False
             return
+
+        if shielded and self.inventory.engraving_below_me.lower() != 'elbereth':
+            # a dust engraving garbles a letter now and then, so allow a few rewrites per spot
+            engraves = self._dig_engrave_attempts.get(key, 0)
+            if engraves < 4:
+                yield True
+                self._dig_engrave_attempts[key] = engraves + 1
+                self.engrave('Elbereth')
+                return
+            if adjacent or self.blstats.hitpoints < 0.7 * self.blstats.max_hitpoints:
+                yield False
+                return
 
         yield True
         self._pick_dig_attempts[key] = attempts + 1
@@ -1774,8 +1870,10 @@ class Agent:
             self.type_text(self.inventory.items.get_letter(pick))
             if 'direction' in self.message and '>' in self.message:
                 self.direction('>')
+                if 'too hard to dig in' in self.message:
+                    self._pick_dig_attempts[key] = 99
             else:
-                self._pick_dig_attempts[key] = 8
+                self._pick_dig_attempts[key] = 99
                 if 'direction' in self.message:
                     self.step(A.Command.ESC)
 

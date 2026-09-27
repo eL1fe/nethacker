@@ -9,7 +9,7 @@ from nle.nethack import actions as A
 
 from autoascend import objects as O, utils
 from autoascend.character import Character
-from autoascend.exceptions import AgentPanic
+from autoascend.exceptions import AgentPanic, AgentFinished
 from autoascend.glyph import G, MON
 from autoascend.item import ItemManager, Item, ContainerContent, check_if_triggered_container_trap, \
     find_equivalent_item, flatten_items
@@ -47,6 +47,14 @@ class Inventory:
         self.engraving_below_me = None
 
         self.skip_engrave_counter = 0
+
+        # hypothesis: several games (cav s1, hea s2, mon s13 ...) end with a healthy character
+        # because handling one container fails (stale contents of an empty bag, a box in a pit)
+        # and the bot retries it forever without the game turn advancing, until NLE aborts the
+        # episode after 10k no-progress steps. Giving up on a container after a few failed
+        # attempts keeps those games alive to gain more experience levels and depth.
+        self._container_failures = {}
+        self.bad_container_ids = set()
 
     def on_panic(self):
         self.items_below_me = None
@@ -159,6 +167,14 @@ class Inventory:
                 return False
             assert 'What do you want to wear?' in self.agent.message, self.agent.message
             self.agent.type_text(letter)
+            if 'You cannot do that while holding your weapon.' in self.agent.message:
+                # a welded two-handed weapon blocks suits, shirts and cloaks; the parsed inventory
+                # does not know the weapon is cursed, so remember the refused slot or
+                # wear_best_stuff retries it forever without passing a turn
+                blocked = getattr(self.agent, '_wear_blocked_until', {})
+                blocked[item.object.sub] = self.agent.blstats.time + 1000
+                self.agent._wear_blocked_until = blocked
+                return False
             assert 'You finish your dressing maneuver.' in self.agent.message or \
                    'You are now wearing ' in self.agent.message or \
                    'Your foot is trapped!' in self.agent.message, self.agent.message
@@ -194,8 +210,33 @@ class Inventory:
 
         return True
 
+    def is_bad_container(self, item):
+        return (item.is_container() or item.is_possible_container()) and \
+            item.container_id is not None and item.container_id in self.bad_container_ids
+
+    def _note_container_failure(self, container):
+        cid = container.container_id
+        if cid is None:
+            return
+        try:
+            n = self._container_failures.get(cid, 0) + 1
+        except TypeError:
+            return
+        self._container_failures[cid] = n
+        if n >= 3:
+            self.bad_container_ids.add(cid)
+
     def use_container(self, container, items_to_put, items_to_take, items_to_put_counts=None,
                       items_to_take_counts=None):
+        try:
+            self._use_container(container, items_to_put, items_to_take, items_to_put_counts, items_to_take_counts)
+        except BaseException as e:
+            if not isinstance(e, AgentFinished):
+                self._note_container_failure(container)
+            raise
+
+    def _use_container(self, container, items_to_put, items_to_take, items_to_put_counts=None,
+                       items_to_take_counts=None):
         assert container in self.items.all_items or container in self.items_below_me
         assert all((item in self.items.all_items for item in items_to_put))
         assert all((item in container.content.items for item in items_to_take))
@@ -211,6 +252,12 @@ class Inventory:
                 yield ' '
             assert 'You have no free hand.' not in self.agent.single_message, 'TODO: handle it'
             assert 'Do what with ' in self.agent.single_popup[0]
+            if items_to_take and ' is empty.' in self.agent.single_popup[0]:
+                # our record of the contents is stale: forget it and close the menu
+                if container.content is not None:
+                    container.content.items.clear()
+                yield A.Command.ESC
+                raise AgentPanic('container is empty, contents were stale')
             if items_to_put and items_to_take:
                 yield 'r'
             elif items_to_put and not items_to_take:
@@ -276,6 +323,14 @@ class Inventory:
                 self.check_container_content(item)
 
     def check_container_content(self, item):
+        try:
+            self._check_container_content(item)
+        except BaseException as e:
+            if not isinstance(e, AgentFinished):
+                self._note_container_failure(item)
+            raise
+
+    def _check_container_content(self, item):
         assert item.is_possible_container() or item.is_container()
         assert item in self.items.all_items or item in self.items_below_me
 
@@ -857,10 +912,11 @@ class Inventory:
             yield False
 
         while 1:
-            items_below_me = list(filter(lambda i: i.shop_status == Item.NOT_SHOP, flatten_items(self.items_below_me)))
+            items_below_me = list(filter(lambda i: i.shop_status == Item.NOT_SHOP and not self.is_bad_container(i),
+                                         flatten_items(self.items_below_me)))
             forced_items = list(filter(lambda i: not i.can_be_dropped_from_inventory(), flatten_items(self.items)))
             assert all((item in self.items.all_items for item in forced_items))
-            free_items = list(filter(lambda i: i.can_be_dropped_from_inventory(),
+            free_items = list(filter(lambda i: i.can_be_dropped_from_inventory() and not self.is_bad_container(i),
                                      flatten_items(sorted(self.items, key=lambda x: x.text))))
             all_items = free_items + items_below_me
 
@@ -1183,7 +1239,7 @@ class Inventory:
                 if best_armorset[slot] == getattr(self.items, name) or \
                         (getattr(self.items, name) is not None and getattr(self.items, name).status == Item.CURSED):
                     continue
-                additional_cond = True
+                additional_cond = self.agent.blstats.time >= getattr(self.agent, '_wear_blocked_until', {}).get(slot, 0)
                 if slot == O.ARM_SHIELD:
                     additional_cond &= self.items.main_hand is None or not self.items.main_hand.objs[0].bi
                 if slot == O.ARM_GLOVES:
@@ -1254,7 +1310,7 @@ class Inventory:
 
         for y, x in zip(*mask.nonzero()):
             for item in self.agent.current_level().items[y, x]:
-                if not item.is_possible_container():
+                if not item.is_possible_container() or self.is_bad_container(item):
                     mask[y, x] = False
 
         if not mask.any():
@@ -1273,7 +1329,7 @@ class Inventory:
     def check_containers(self):
         yielded = False
         for item in self.agent.inventory.items_below_me:
-            if item.is_possible_container():
+            if item.is_possible_container() and not self.is_bad_container(item):
                 if not yielded:
                     yielded = True
                     yield True

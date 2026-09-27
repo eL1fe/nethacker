@@ -317,7 +317,8 @@ def goto_action(agent, priority, monsters):
         if not adjacent((agent.blstats.y, agent.blstats.x), (my, mx)):
             # and not mon.mname in ONLY_RANGED_SLOW_MONSTERS:
             return [(1, ('go_to', my, mx))]
-    assert 0, monsters
+    # every monster is already adjacent: nothing to walk towards
+    return []
 
 
 def get_corridors_priority_map(walkable):

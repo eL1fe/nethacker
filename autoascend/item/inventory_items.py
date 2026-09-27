@@ -112,7 +112,8 @@ class InventoryItems:
                             setattr(self, name, item)
                             break
 
-                if item.is_possible_container() or (item.is_container() and self._recheck_containers):
+                if (item.is_possible_container() or (item.is_container() and self._recheck_containers)) and \
+                        not self.agent.inventory.is_bad_container(item):
                     self.agent.inventory.check_container_content(item)
 
                 if (self.agent.last_observation['inv_strs'] != previous_inv_strs).any():

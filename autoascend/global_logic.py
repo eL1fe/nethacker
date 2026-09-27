@@ -166,18 +166,11 @@ EARLY_DIG_XL = 5
 # grind before it gives up and dives by the stairs; 0 disables the hunt
 PICK_HUNT_TURNS = 3000
 # experience level the Dlvl 1 grind stops at before the deep phase begins
-GRIND_XL = 5
-# a bare-handed Monk at Xp 5 dies to the hostile Mines packs it meets on the pick hunt;
-# martial arts scale with level, so it grinds (and only digs) from AutoAscend's Xp 8
-MONK_GRIND_XL = 8
-
-
-def grind_xl(character):
-    return MONK_GRIND_XL if character.role == Character.MONK else GRIND_XL
-
-
-def early_dig_xl(character):
-    return MONK_GRIND_XL if character.role == Character.MONK else EARLY_DIG_XL
+# hypothesis: leaving Dlvl 1 at Xp 5 (~45 max HP) sends most roles into the Mines / stair dive
+# underpowered -- 60% of games here die on Dlvl 2-6 at Xp 5-7 (0.03-0.05) to ants, wands, were-
+# creatures. Grinding the safe first floor to Xp 8 banks 0.075 on its own and starts the descent
+# with ~70 HP. Pick carriers (Archeologists) are unaffected: they dig from EARLY_DIG_XL.
+GRIND_XL = 8
 
 
 class GlobalLogic:
@@ -559,7 +552,10 @@ class GlobalLogic:
         while 1:
             explore_stairs_condition = lambda: False
             if self.milestone == Milestone.BE_ON_FIRST_LEVEL:
-                condition = lambda: self.agent.blstats.experience_level >= grind_xl(self.agent.character)
+                # a Barbarian (d12 HP, two-handed sword, poison resistance) is already strong at Xp 5
+                # and loses more to the long grind's hunger than it gains from the extra levels
+                grind_xl = 5 if self.agent.character.role == Character.BARBARIAN else GRIND_XL
+                condition = lambda: self.agent.blstats.experience_level >= grind_xl
                 # explore_stairs_condition = lambda: self.agent.inventory.items.total_nutrition() == 0 and \
                 #                                    self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY
                 level = (Level.DUNGEONS_OF_DOOM, 1)
@@ -606,7 +602,7 @@ class GlobalLogic:
             # a character that can dig heads straight down instead of grinding on Dlvl 1 (see
             # Agent.dig_down); otherwise the Dlvl 1 milestone walks it back up after every hole
             if self.milestone < Milestone.GO_DOWN and \
-                    self.agent.blstats.experience_level >= early_dig_xl(self.agent.character) and \
+                    self.agent.blstats.experience_level >= EARLY_DIG_XL and \
                     self.agent.pick_for_digging() is not None:
                 self.milestone = Milestone.GO_DOWN
                 continue
@@ -714,9 +710,6 @@ class GlobalLogic:
         return (
             self.current_strategy().repeat()
             .preempt(self.agent, [
-                self.agent.rest_strategy(),
-            ])
-            .preempt(self.agent, [
                 self.solve_sokoban_strategy()
                 .condition(lambda: self.milestone == Milestone.SOLVE_SOKOBAN and
                                    self.agent.current_level().dungeon_number == Level.SOKOBAN)
@@ -731,6 +724,9 @@ class GlobalLogic:
             ])
             .preempt(self.agent, [
                 self.agent.cure_disease().every(5),
+            ])
+            .preempt(self.agent, [
+                self.agent.rest_to_heal(),
             ])
             .preempt(self.agent, [
                 self.agent.eat_corpses_from_ground(only_below_me=True).condition(lambda: self.agent.blstats.hunger_state >= Hunger.NOT_HUNGRY),
