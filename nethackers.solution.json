@@ -1,16 +1,24 @@
 {
   "schema": "nethackers.solution/v1",
-  "name": "autoascend-dive",
+  "name": "jawfish-router-el1fe-fixes",
   "root": "autoascend",
   "parents": [
-    "github.com/Komershan/nethacker@f8a582173dfb154a3cd83cdc6f7008a3d7e8d5fe"
+    "github.com/daglar-dragomirov/nethacker@5d0d455a1585271143aa47fbd5b44c2f6dae7d4b"
   ],
   "influences": [
-    "github.com/Komershan/nethacker@132b7c2d662f40bf7f86335c98709025b8b23967",
-    "github.com/DT6A/nethacker@464e1662a4cb60567c7946d2d952278c64eefe84",
-    "github.com/Komershan/nethacker@f8a582173dfb154a3cd83cdc6f7008a3d7e8d5fe",
+    "github.com/DT6A/nethacker@59ce30c509ef568366fe846afeba03dede939339",
+    "github.com/daglar-dragomirov/nethacker@14626734f3d8a0702b52e67996ba86b57ef0b852",
+    "github.com/daglar-dragomirov/nethacker@c131c7c377fc36b84b2c969aee4b40ff9ec6e653",
+    "github.com/daglar-dragomirov/nethacker@cb527267cc6e3562ea8e02ccc09c90ff17fe8ccf",
+    "github.com/kefirski/nethacker@314507ee72fcedf3749b6e2b4d60330bc159e88f",
+    "github.com/kefirski/nethacker@5b7f1ebb452945da5d76862ce21d8b1a0053c0f5",
+    "github.com/kefirski/nethacker@91cc604d54aec632e67f8f21680319ac7e77a2fd",
+    "github.com/kenforthewin/nethack_astra@38b1a38b340d4cb154fe5e4411b2819dc407d5e3",
+    "github.com/vkurenkov/nethacker@f15bb8c8e01d905d1946e32bfd2558e17394eab6",
+    "github.com/daglar-dragomirov/nethacker@5d0d455a1585271143aa47fbd5b44c2f6dae7d4b",
     "github.com/eL1fe/nethacker@6585733dcf31afb57bb0b113cc735f9991cfd968",
-    "github.com/eL1fe/nethacker@dc2765b9a90074e2823521afb721b7ee16ef35a7"
+    "github.com/eL1fe/nethacker@dc2765b9a90074e2823521afb721b7ee16ef35a7",
+    "github.com/eL1fe/nethacker@087e92de74a607a34b0938d881268c66bdc08b71"
   ],
   "entrypoint": "bot.py"
 }
