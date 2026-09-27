@@ -210,13 +210,16 @@ class Item:
     def wand_charges_left(self, item):
         assert item.is_wand()
 
+    def is_known_empty_wand(self):
+        # (x:0) once the charges are identified; 'EMPT' is the name Agent.zap gives a dry wand
+        return str(self.uses).endswith(':0') or self.comment == 'EMPT'
+
     def is_offensive_usable_wand(self):
         if len(self.objs) != 1:
             return False
         if not self.is_ray_wand():
             return False
-        if self.uses == 'no charges':
-            # TODO: is it right ?
+        if self.is_known_empty_wand():
             return False
         # hypothesis: Healers start with a wand of sleep; using it to disable dangerous
         # approaching monsters (then meleeing them while asleep) should improve early-game

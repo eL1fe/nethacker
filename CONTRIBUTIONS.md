@@ -12,6 +12,14 @@ Changes that originated in github.com/eL1fe/nethacker:
   Found by our `nethackers evolve` run.
 - Never offer a same-race corpse on an altar: a chaotic character summons a demon lord that way
   ("poisoned by Juiblex" on Dlvl 1). Found by our `nethackers evolve` run.
+- Keep healing potions for real crises (below a third of max HP or at 5 HP, and only when a
+  prayer would not fix it now); the old "HP < 8" rule drank both starting potions on scratches.
+  Found by our `nethackers evolve` run.
+- Never set off a gas spore next to a pet or a peaceful: killing the pet angers the god and every
+  later prayer fails. Found by our `nethackers evolve` run.
+- Stop at "Nothing happens" when zapping an empty wand: the direction key was sent anyway and
+  became a move (one walked into a peaceful shopkeeper), and the dud wand kept being chosen in
+  fights. Tag it and never zap it again. Found independently by two of our `nethackers evolve` runs.
 - Run AutoAscend with `panic_on_errors=True`, so an assertion goes through AutoAscend's own panic
   recovery instead of killing the agent thread and stalling the episode.
 - Drop Sokoban when the solver's map desyncs; forget phantom altars; parse singular

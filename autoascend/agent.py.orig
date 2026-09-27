@@ -764,27 +764,11 @@ class Agent:
         return True
 
     def zap(self, item, direction):
-        # hypothesis: a wand with no charges left answers "Nothing happens." *before* asking for a
-        # direction, so the direction key we then sent was read as a move ("It's a wall.", or '>' =
-        # "You can't go down here"), and since nothing recorded that the wand was dry, fight2 / the
-        # emergency sleep zap / dig_down picked the same wand again next turn -- a blind Xp 9 Knight
-        # burned its last turns zapping an empty wand while a soldier ant took it from 18 HP to dead.
-        # Stop typing the direction when it is not asked for, name the wand EMPT and never select an
-        # EMPT (or visibly (x:0)) wand again, so the fight falls back to melee/flight.
         with self.atom_operation():
-            letter = self.inventory.items.get_letter(item)
             self.step(A.Command.ZAP)
-            self.type_text(letter)
-            if 'In what direction?' not in self.message:
-                empty = 'Nothing happens' in self.message
-            else:
-                empty = False
-                self.direction(direction)
-        if empty:
-            items = self.inventory.items
-            if letter in items.all_letters:
-                self.inventory.call_item(items.all_items[items.all_letters.index(letter)], 'EMPT')
-        return not empty
+            self.type_text(self.inventory.items.get_letter(item))
+            self.direction(direction)
+        return True
 
     def fire(self, item, direction):
         if self.character.prop.polymorph:
@@ -1542,7 +1526,7 @@ class Agent:
             sleep_wand = None
             for item in flatten_items(self.inventory.items):
                 if item.is_wand() and item.is_unambiguous() and item.object.name == 'sleep' \
-                        and not item.is_known_empty_wand():
+                        and item.uses != 'no charges' and not str(item.uses).endswith(':0'):
                     sleep_wand = item
                     break
             if sleep_wand is not None:
@@ -1697,7 +1681,7 @@ class Agent:
         sleep_wand = None
         for item in flatten_items(self.inventory.items):
             if item.is_wand() and item.is_unambiguous() and item.object.name == 'sleep' \
-                    and not item.is_known_empty_wand():
+                    and item.uses != 'no charges' and not str(item.uses).endswith(':0'):
                 sleep_wand = item
                 break
         if sleep_wand is None:
@@ -1800,7 +1784,7 @@ class Agent:
         wand = None
         for item in flatten_items(self.inventory.items):
             if item.is_wand() and item.is_unambiguous() and item.object.name == 'digging' \
-                    and not item.is_known_empty_wand():
+                    and item.uses != 'no charges' and not str(item.uses).endswith(':0'):
                 wand = item
                 break
 

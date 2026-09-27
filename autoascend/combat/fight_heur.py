@@ -12,6 +12,23 @@ from .movement_priority import draw_monster_priority_positive, draw_monster_prio
 from .utils import wielding_ranged_weapon, line_dis_from, inside
 
 
+# hypothesis: a gas spore's death explosion deals 4d6 to every square around it, and the bot shoots
+# (or, when cornered, melees) spores with no regard for who stands next to them. On the long Dlvl 1
+# grind the pet trails the character and keeps getting caught: "You kill poor Hachi!" costs -15
+# alignment and often -5 Luck, so the next prayer is answered with "Thou art arrogant" and the
+# god stays angry -- the hunger and low-HP prayers the grind relies on then fail and the character
+# starves or dies on Dlvl 1. Never set off a spore while a pet or peaceful is in its blast.
+def explosion_would_hit_friend(agent, y, x):
+    peaceful_mask = agent.monster_tracker.peaceful_monster_mask
+    for y2 in range(max(0, y - 1), min(agent.glyphs.shape[0], y + 2)):
+        for x2 in range(max(0, x - 1), min(agent.glyphs.shape[1], x + 2)):
+            if (y2, x2) == (y, x):
+                continue
+            if agent.glyphs[y2, x2] in G.PETS or peaceful_mask[y2, x2]:
+                return True
+    return False
+
+
 def melee_monster_priority(agent, monsters, monster):
     _, y, x, mon, _ = monster
     ret = 1
@@ -33,7 +50,7 @@ def melee_monster_priority(agent, monsters, monster):
             if mon.mname == 'gas spore':
                 ret -= 5
 
-    if mon.mname == 'gas spore':
+    if mon.mname == 'gas spore' and not explosion_would_hit_friend(agent, y, x):
         # handle a specific case when you are trapped by a gas spore
         if len(agent.get_visible_monsters()) == 1 \
                 and agent.blstats.hitpoints / agent.blstats.max_hitpoints:
@@ -84,6 +101,8 @@ def ranged_priority(agent, dy, dx, monsters):
                 return None
             assert len(monster) == 1
             _, _, _, mon, _ = monster[0]
+            if mon.mname == 'gas spore' and explosion_would_hit_friend(agent, y, x):
+                return None
             dis = line_dis_from(agent, y, x)
             if dis > agent.character.get_range(launcher, ammo):
                 return None
