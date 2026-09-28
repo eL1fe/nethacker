@@ -28,7 +28,8 @@
     "github.com/daglar-dragomirov/nethacker@fc50360e721e98e5a322dbd6282c703718bd4d46",
     "github.com/DT6A/nethacker@d956abff7baa169d549a8d12fa1d219412833b67",
     "github.com/Komershan/nethacker@ddfd58642853498954a79134e525b98a5e248fbb",
-    "github.com/kefirski/nethacker@44e1e586cf4c6707b72b8d5238cb34311b615a01"
+    "github.com/kefirski/nethacker@44e1e586cf4c6707b72b8d5238cb34311b615a01",
+    "github.com/CleverShovel/nethacker@0d1fb22498024cdcac06be9d15d0f70e8cae803c"
   ],
   "entrypoint": "bot.py"
 }

@@ -1674,14 +1674,6 @@ class Agent:
         with self.atom_operation():
             dy, dx = direction
             direction = self.calc_direction(self.blstats.y, self.blstats.x, self.blstats.y + dy, self.blstats.x + dx)
-            # the answer to "In what direction?" is a key: 'ne' is two keys and 'n' is vi-key south-east
-            direction = {
-                'n': A.CompassDirection.N, 's': A.CompassDirection.S,
-                'e': A.CompassDirection.E, 'w': A.CompassDirection.W,
-                'ne': A.CompassDirection.NE, 'se': A.CompassDirection.SE,
-                'nw': A.CompassDirection.NW, 'sw': A.CompassDirection.SW,
-                '.': A.MiscDirection.WAIT,
-            }[direction]
             success = [False]
 
             def type_letters():
@@ -2284,7 +2276,7 @@ class Agent:
                 yielded = True
                 yield True
                 self.character.parse_enhance_view()
-                self.character.parse_spellcast_view()
+                # self.character.parse_spellcast_view()
 
             move_priority_heatmap, actions = combat.fight_heur.get_priorities(self)
             actions.extend(combat.fight_heur.get_move_actions(self, dis, move_priority_heatmap))
@@ -2329,7 +2321,7 @@ class Agent:
                     a[1][0] in ('melee', 'kick') and self._spore_unsafe_at(self.blstats.y + a[1][1],
                                                                           self.blstats.x + a[1][2]))]
             if allow_attack_all:
-                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap', 'force_bolt')]
+                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap')]
                 if attack_actions:
                     actions = attack_actions
 
@@ -2463,11 +2455,6 @@ class Agent:
                 fired = self.fire(ammo, dir)
                 assert fired, (ammo, dir)
                 return wait_counter
-
-        elif best_action[0] == 'force_bolt':
-            _, dy, dx = best_action
-            self.cast('force bolt', direction=(dy, dx))
-            return wait_counter
 
         elif best_action[0] == 'elbereth':
             assert self.inventory.engraving_below_me.lower() != 'elbereth'
@@ -2764,16 +2751,15 @@ class Agent:
                 return
 
 
-        # a Healer starts with healing and extra healing: cast them before potions and prayer
-        if self.should_cast_extra_heal():
-            yield True
-            self.cast('extra healing', direction=(0, 0))
-            return
+        # if self.should_cast_extra_heal():
+        #     yield True
+        #     self.cast('extra healing', direction=(0, 0))
+        #     return
 
-        if self.should_cast_heal():
-            yield True
-            self.cast('healing', direction=(0, 0))
-            return
+        # if self.should_cast_heal():
+        #     yield True
+        #     self.cast('healing', direction=(0, 0))
+        #     return
 
         # hypothesis (astra guard.py stop list): stoning, sliming, strangling and food poisoning /
         # terminal illness kill within a few turns; prayer fixes all of them, so a riskier-than-usual
@@ -3241,7 +3227,7 @@ class Agent:
                         for field in ('role', 'race', 'alignment', 'gender', 'self_glyph'):
                             setattr(self.character, field, getattr(prev, field))
                     self.character.parse_enhance_view()
-                    self.character.parse_spellcast_view()
+                    # self.character.parse_spellcast_view()
                     self.step(A.Command.AUTOPICKUP)
                     if 'Autopickup: ON' in self.message:
                         self.step(A.Command.AUTOPICKUP)

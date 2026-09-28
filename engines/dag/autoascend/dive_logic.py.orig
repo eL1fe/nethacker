@@ -4117,8 +4117,6 @@ class DiveLogic:
                 self._walk_through_traps():
             targets = self.down_targets()
         if not targets:
-            if self._read_magic_mapping():
-                return
             self.exploration(None).until(agent, self._budgeted(lambda: bool(self.down_targets()))).run()
             return
 
@@ -4156,32 +4154,6 @@ class DiveLogic:
         if self.rest_if_hurt():
             return
         self.step_onto(y, x, 'trap door')
-
-    MAGIC_MAPPING_MIN_DEPTH = 3
-
-    def _read_magic_mapping(self):
-        """No '>' known: read a known scroll of magic mapping instead of exploring (a Tourist starts with
-        four and never read one). From Dlvl 3, where exploring gets dangerous; once per level."""
-        agent = self.agent
-        level = agent.current_level()
-        mapped = self.__dict__.setdefault('_magic_mapped', set())
-        prop = agent.character.prop
-        if level.key() in mapped or agent.blstats.depth < self.MAGIC_MAPPING_MIN_DEPTH or \
-                prop.blind or prop.confusion or prop.hallu:
-            return False
-        scrolls = [i for i in flatten_items(agent.inventory.items)
-                   if i.category == nh.SCROLL_CLASS and i.is_unambiguous() and i.object.name == 'magic mapping'
-                   and i.status != Item.CURSED and i.shop_status == Item.NOT_SHOP]
-        if not scrolls:
-            return False
-        mapped.add(level.key())
-        letter = agent.inventory.items.get_letter(scrolls[0])
-        agent.log(f'DIVE reading magic mapping ({letter}) at depth {agent.blstats.depth}')
-        with agent.atom_operation():
-            agent.step(A.Command.READ)
-            agent.type_text(letter)
-        agent.inventory.items.update(force=True)
-        return True
 
     def step_onto(self, y, x, what):
         agent = self.agent
