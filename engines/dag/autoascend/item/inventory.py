@@ -19,6 +19,10 @@ from autoascend.item.inventory_items import InventoryItems
 from autoascend.strategy import Strategy
 
 
+MELEE_BASHING = frozenset({'dart', 'shuriken', 'boomerang', 'arrow', 'elven arrow', 'orcish arrow',
+                           'silver arrow', 'ya', 'crossbow bolt'})
+
+
 class Inventory:
     _name_to_category = {
         'Amulets': nh.AMULET_CLASS,
@@ -861,6 +865,10 @@ class Inventory:
         best_item = None
         best_dps = utils.calc_dps(*self.agent.character.get_melee_bonus(None, large_monster=False))
         for item in flatten_items(items):
+            # darts, shuriken, boomerangs, arrows and bolts only "bash" in melee; wielding them also
+            # kept them out of the throwing set (a Tourist bashed with its +2 darts and never threw one)
+            if item.is_weapon() and item.is_unambiguous() and item.object.name in MELEE_BASHING:
+                continue
             if item.is_weapon() and \
                     (item.status in [Item.UNCURSED, Item.BLESSED] or
                      (allow_unknown_status and item.status == Item.UNKNOWN)):

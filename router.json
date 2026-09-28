@@ -2,6 +2,7 @@
  "default": "dag",
  "roles": {
   "Samurai": "jawfish",
-  "Tourist": "kefirski"
+  "Tourist": "kefirski",
+  "Healer/gnome": "dagfc5"
  }
 }

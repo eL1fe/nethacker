@@ -20,10 +20,15 @@
     "github.com/eL1fe/nethacker@dc2765b9a90074e2823521afb721b7ee16ef35a7",
     "github.com/eL1fe/nethacker@087e92de74a607a34b0938d881268c66bdc08b71",
     "github.com/eL1fe/nethacker@5fb52f1817758c8cbb2b9ee767c2e3a239b63d73",
+    "github.com/Komershan/nethacker@5520db0a6f9ffbcd64c19443bf71746d7c403b69",
+    "github.com/vkurenkov/nethacker@21e65391b70273f5c9c7e1b4df614a880da64cf1",
+    "github.com/vkurenkov/nethacker@ef6acf87e265f74600b914060f620d06117070a3",
+    "github.com/vlomshakov/nethacker@9ef4063cf36fa1d26416d11e83ef7fb1575e9ada",
+    "github.com/daglar-dragomirov/nethacker@69baf4943e2f47a23715b3814438b180c3c64b75",
+    "github.com/daglar-dragomirov/nethacker@fc50360e721e98e5a322dbd6282c703718bd4d46",
     "github.com/DT6A/nethacker@d956abff7baa169d549a8d12fa1d219412833b67",
     "github.com/Komershan/nethacker@ddfd58642853498954a79134e525b98a5e248fbb",
-    "github.com/kefirski/nethacker@44e1e586cf4c6707b72b8d5238cb34311b615a01",
-    "github.com/vkurenkov/nethacker@ef6acf87e265f74600b914060f620d06117070a3"
+    "github.com/kefirski/nethacker@44e1e586cf4c6707b72b8d5238cb34311b615a01"
   ],
   "entrypoint": "bot.py"
 }

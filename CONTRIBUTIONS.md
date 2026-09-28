@@ -6,5 +6,6 @@ The engines are unmodified copies; all credit for them belongs to their authors 
 
 Default engine: `dag` (github.com/eL1fe/nethacker@5fb52f1817758c8cbb2b9ee767c2e3a239b63d73)
 
+- Healer/gnome: `dagfc5` (github.com/daglar-dragomirov/nethacker@fc50360e721e98e5a322dbd6282c703718bd4d46)
 - Samurai: `jawfish` (github.com/vkurenkov/nethacker@f15bb8c8e01d905d1946e32bfd2558e17394eab6)
 - Tourist: `kefirski` (github.com/kefirski/nethacker@314507ee72fcedf3749b6e2b4d60330bc159e88f)

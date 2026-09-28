@@ -38,9 +38,17 @@ def _text(observation: Mapping[str, Any]) -> str:
     return ' '.join(parts)
 
 
+RACES = {'human': 'human', 'elven': 'elf', 'dwarven': 'dwarf', 'gnomish': 'gnome', 'orcish': 'orc'}
+
+
 def detect_role(observation: Mapping[str, Any]) -> str | None:
     found = re.search(r'\b(' + '|'.join(ROLES) + r')\b', _text(observation))
     return CANONICAL.get(found.group(1), found.group(1)) if found else None
+
+
+def detect_race(observation: Mapping[str, Any]) -> str | None:
+    found = re.search(r'\b(' + '|'.join(RACES) + r')\b', _text(observation))
+    return RACES[found.group(1)] if found else None
 
 
 def _load_engine(name: str):
@@ -62,7 +70,10 @@ class Bot:
     def reset(self, initial_observation: Mapping[str, Any]) -> None:
         if self._inner is None:
             role = detect_role(initial_observation)
-            name = self._config['roles'].get(role, self._config['default'])
+            race = detect_race(initial_observation)
+            # "Healer/gnome" beats "Healer" beats the default
+            roles = self._config['roles']
+            name = roles.get(f'{role}/{race}', roles.get(role, self._config['default']))
             self._inner = _load_engine(name).make_agent()
         self._inner.reset(initial_observation)
 
