@@ -8,9 +8,17 @@ and the fixes listed at the end.
 Default engine: `dag69` (github.com/daglar-dragomirov/nethacker@69baf4943e2f47a23715b3814438b180c3c64b75:
 vkurenkov's jawfish 21e6539 with the castle crossing, plus daglar's additions)
 
+- Healer (human): `vlom8b4` (github.com/vlomshakov/nethacker@8b492ce95e6988b0eae2de84aef1379f885a1306), +3.7 points over 96 paired
+  human Healer games against the previous router
 - Healer/gnome: `dagfc5` (github.com/daglar-dragomirov/nethacker@fc50360e721e98e5a322dbd6282c703718bd4d46)
 - Samurai: `jawfish` (github.com/vkurenkov/nethacker@f15bb8c8e01d905d1946e32bfd2558e17394eab6)
 - Tourist: `kefirski` (github.com/kefirski/nethacker@314507ee72fcedf3749b6e2b4d60330bc159e88f)
+
+## eL1fe's fixes in the router
+
+- the role is read from the Xp 1 rank title in the status line ("Agent the Rambler") when the welcome
+  line is missing (a full or new moon message can replace it), instead of falling back to the default
+  engine
 
 ## eL1fe's fixes in the engines
 

@@ -25,8 +25,11 @@
     "github.com/DT6A/nethacker@d956abff7baa169d549a8d12fa1d219412833b67",
     "github.com/Komershan/nethacker@ddfd58642853498954a79134e525b98a5e248fbb",
     "github.com/kefirski/nethacker@44e1e586cf4c6707b72b8d5238cb34311b615a01",
+    "github.com/vlomshakov/nethacker@3488fcf091486bd983eec338c4cfefd395f1d496",
+    "github.com/vlomshakov/nethacker@8b492ce95e6988b0eae2de84aef1379f885a1306",
     "github.com/CleverShovel/nethacker@0d1fb22498024cdcac06be9d15d0f70e8cae803c",
-    "github.com/eL1fe/nethacker@acf4a1de674597d5f717ddd174d85bcd7190e60a"
+    "github.com/eL1fe/nethacker@acf4a1de674597d5f717ddd174d85bcd7190e60a",
+    "github.com/eL1fe/nethacker@012dce4eef00fb92e814e2aa5a405c1eed015e96"
   ],
   "entrypoint": "bot.py"
 }

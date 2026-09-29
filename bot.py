@@ -41,9 +41,21 @@ def _text(observation: Mapping[str, Any]) -> str:
 RACES = {'human': 'human', 'elven': 'elf', 'dwarven': 'dwarf', 'gnomish': 'gnome', 'orcish': 'orc'}
 
 
+# Xp 1 rank titles (role.c): on a full or new moon the moon message can replace the welcome line, and
+# the status line ("Agent the Rambler") is all that names the role
+TITLES = {'Digger': 'Archeologist', 'Plunderer': 'Barbarian', 'Plunderess': 'Barbarian',
+          'Troglodyte': 'Caveman', 'Rhizotomist': 'Healer', 'Gallant': 'Knight', 'Candidate': 'Monk',
+          'Aspirant': 'Priest', 'Tenderfoot': 'Ranger', 'Footpad': 'Rogue', 'Hatamoto': 'Samurai',
+          'Rambler': 'Tourist', 'Stripling': 'Valkyrie', 'Evoker': 'Wizard'}
+
+
 def detect_role(observation: Mapping[str, Any]) -> str | None:
-    found = re.search(r'\b(' + '|'.join(ROLES) + r')\b', _text(observation))
-    return CANONICAL.get(found.group(1), found.group(1)) if found else None
+    text = _text(observation)
+    found = re.search(r'\b(' + '|'.join(ROLES) + r')\b', text)
+    if found:
+        return CANONICAL.get(found.group(1), found.group(1))
+    title = re.search(r'\bthe (' + '|'.join(TITLES) + r')\b', text)
+    return TITLES[title.group(1)] if title else None
 
 
 def detect_race(observation: Mapping[str, Any]) -> str | None:
