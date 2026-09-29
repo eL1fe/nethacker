@@ -434,7 +434,7 @@ class Character:
         self.spell_fail_chance = dict()
 
         # Healers heal themselves, Wizards cast force bolt (see fight_heur.force_bolt_actions)
-        if self.role not in (self.HEALER, self.WIZARD):
+        if self.role not in (self.HEALER, self.WIZARD, self.MONK, self.PRIEST):
             return
 
         with self.agent.atom_operation():

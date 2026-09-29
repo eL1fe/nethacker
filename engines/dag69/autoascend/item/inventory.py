@@ -222,36 +222,11 @@ class Inventory:
                 return False
             assert 'What do you want to wear?' in self.agent.message, self.agent.message
             self.agent.type_text(letter)
-            if 'You cannot do that while holding your weapon.' in self.agent.message:
-                # a welded two-handed weapon blocks suits, shirts and cloaks; the parsed inventory
-                # does not know the weapon is cursed, so remember the refused slot or
-                # wear_best_stuff retries it forever without passing a turn
-                blocked = getattr(self.agent, '_wear_blocked_until', {})
-                blocked[item.object.sub] = self.agent.blstats.time + 1000
-                self.agent._wear_blocked_until = blocked
-                return False
-            if self._blocked_by_trap(item):
-                return False
             assert 'You finish your dressing maneuver.' in self.agent.message or \
-                   'You are now wearing ' in self.agent.message, self.agent.message
+                   'You are now wearing ' in self.agent.message or \
+                   'Your foot is trapped!' in self.agent.message, self.agent.message
 
         return True
-
-    def _blocked_by_trap(self, item):
-        # hypothesis: wear_best_stuff swaps boots as soon as better ones are picked up, but with a
-        # foot held by a bear trap (or stuck in the floor) NetHack refuses both taking the old boots
-        # off and putting the new ones on without spending a turn. The refusal failed an assertion
-        # (take off) or passed as success (put on), so the strategy retried forever without the
-        # game advancing until the run was aborted -- e.g. an Xp8 Caveman that had just picked up
-        # a pick-axe and was about to dive. Treat the refusal as "blocked for a while" (like the
-        # welded-weapon case) so the bot gets on with escaping the trap and the game goes on.
-        if re.search(r'Your foot is trapped!|Your feet are stuck in the |is attached to the buried ball!|'
-                     r'bear trap prevents you from pulling your |and cannot pull your ', self.agent.message):
-            blocked = getattr(self.agent, '_wear_blocked_until', {})
-            blocked[item.object.sub] = self.agent.blstats.time + 20
-            self.agent._wear_blocked_until = blocked
-            return True
-        return False
 
     def takeoff(self, item):
         # TODO: smart
@@ -277,8 +252,6 @@ class Inventory:
                 assert 'What do you want to take off?' in self.agent.message, self.agent.message
                 self.agent.type_text(letter)
             if 'It is cursed.' in self.agent.message or 'They are cursed.' in self.agent.message:
-                return False
-            if self._blocked_by_trap(item):
                 return False
             assert is_take_off_message(), self.agent.message
 
@@ -1176,7 +1149,7 @@ class Inventory:
             yield False  # TODO: only for handless monsters (which cannot write)
 
         self.skip_engrave_counter -= 1
-        if self.agent.character.prop.blind or self.skip_engrave_counter > 0 or self.agent.hands_welded():
+        if self.agent.character.prop.blind or self.skip_engrave_counter > 0 or self.agent.no_free_hand():
             yield False
             return
         yielded = False
@@ -1268,6 +1241,8 @@ class Inventory:
 
     def _engrave_single_wand(self, item):
         """ Returns possible objects or None if current tile not suitable for identification."""
+        # WISH_TELEPORT_ROUTE: a wish prompt during the engrave-test comes from a wand of wishing (>= 2 wishes)
+        self.agent._last_wand_use_step = self.agent.step_count
 
         def msg():
             return self.agent.message
@@ -1378,7 +1353,7 @@ class Inventory:
                 if best_armorset[slot] == getattr(self.items, name) or \
                         (getattr(self.items, name) is not None and getattr(self.items, name).status == Item.CURSED):
                     continue
-                additional_cond = self.agent.blstats.time >= getattr(self.agent, '_wear_blocked_until', {}).get(slot, 0)
+                additional_cond = True
                 if slot == O.ARM_SHIELD:
                     additional_cond &= self.items.main_hand is None or not self.items.main_hand.objs[0].bi
                 if slot == O.ARM_GLOVES:

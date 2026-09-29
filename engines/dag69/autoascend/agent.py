@@ -13,6 +13,7 @@ from nle.nethack import actions as A
 from . import combat
 from . import jf_config, jf_log, jf_scenario
 from . import power
+from . import power_route
 from . import utils
 from .character import Character
 from .exceptions import AgentPanic, AgentFinished, AgentChangeStrategy
@@ -417,6 +418,17 @@ class Agent:
                 self._faint_msg_turn = None
         return done
 
+    def _note_poly_control(self):
+        """The game asked 'Become what kind of monster?': polymorph control, from one of the rings worn now (or an
+        intrinsic when none is). dive_logic.xorn_repoly zaps the wand of polymorph again only while these rings are
+        still on (a bolt of lightning turned jf16-s0~13's ruby ring to dust on Gehennom 5)."""
+        self._poly_control_turn = self.blstats.time
+        try:
+            self._poly_control_rings = frozenset(self.inventory.items.get_letter(i) for i in self.inventory.items
+                                                 if i.category == nh.RING_CLASS and i.equipped)
+        except Exception:
+            self._poly_control_rings = None
+
     def step(self, action, additional_action_iterator=None):
         if self._no_step_calls:
             raise ValueError("Shouldn't call step now")
@@ -447,6 +459,16 @@ class Agent:
     def update(self, observation, additional_action_iterator=None):
         self._observation = observation
         done = self.update_message_and_popup(observation)
+        # TC_ROUTE (power_route.py): TC prompts, the tengu intrinsic and read effects are learned before the prompt
+        # handling below answers them
+        power_route.note_message(self)
+        if jf_config.CFP_XORN or jf_config.CFP_INVIS or jf_config.VALLEY_XORN:
+            # castle-first-pass: our polymorph form (and invisibility) from the messages (an invisible hero's square
+            # shows no form glyph); VALLEY_XORN needs 'You return to dwarven form!' too: without it a lapsed xorn kept
+            # walking into the Valley's walls ('It's a wall.') while a troll beat it to death (vxx2 s2; s4, s6 with
+            # vampire bats)
+            from . import castle_cross
+            castle_cross.note_message(self)
 
         self._is_reading_message_or_popup = True
         if additional_action_iterator is not None:
@@ -487,6 +509,38 @@ class Agent:
                 self.log(f'POWER wishing for {text!r}')
                 power.note_wish(self, text)
                 self.step(text[0], iter(text[1:] + '\r'))
+                return
+            elif jf_config.LEVELPORT_DEEP and 'To what level do you want to teleport?' in self.single_message and \
+                    hasattr(self, 'blstats') and self.blstats.dungeon_number in (0, 1) and \
+                    self._text_prompt_escapes == 0:
+                # teleport control (teleport.c level_tele): from the Dungeons any level past the castle is
+                # find_hell() -- the Valley, castle+1 -- and from Gehennom level 50 exactly, or the vibrating-square
+                # level (bottom-1) when that is shallower. 50 is the top of the progress table (Dlvl 51 is not in
+                # it: harness wr2-unknown seeds 5 and 11 landed on 51 and scored only their Valley). ESC cancels the
+                # teleport, and a level teleporter is used up before it asks.
+                self.log('LEVELPORT controlled level teleport: asking for level 50')
+                self._text_prompt_escapes += 1   # one answer per prompt; a re-ask falls back to ESC
+                self.step('5', iter('0\r'))
+                return
+            elif jf_config.POLY_XORN and 'Become what kind of monster?' in self.single_message and \
+                    self._text_prompt_escapes == 0 and power_route.on_castle_level(self):
+                # polymorph control (polyself.c): ESC here means '*', a random form. On the castle ask for a xorn:
+                # M1_WALLWALK and castle.des has no NON_PASSWALL, so it walks through the walls to the trap doors
+                # (40..55,08) and falls through (not a flyer). Elsewhere today's random form stays.
+                self.log('POLY controlled polymorph on the castle: xorn')
+                self._text_prompt_escapes += 1
+                self._note_poly_control()
+                self.step('x', iter('orn\r'))
+                return
+            elif jf_config.VALLEY_XORN and 'Become what kind of monster?' in self.single_message and \
+                    self._text_prompt_escapes == 0 and self.global_logic.dive.in_gehennom():
+                # VALLEY_XORN (dive_logic.xorn_repoly): the xorn form ran out in Gehennom and the wand of polymorph
+                # was zapped at us again -- a xorn again (the Valley's walls and the stone around its map, a buffer
+                # of form HP over ours while the dig-dive goes on)
+                self.log('POLY controlled polymorph in Gehennom: xorn')
+                self._text_prompt_escapes += 1
+                self._note_poly_control()
+                self.step('x', iter('orn\r'))
                 return
             else:
                 # a text-entry flag that survives ESC after ESC recursed update->step->update until
@@ -1643,6 +1697,7 @@ class Agent:
         # astra: an empty wand prints "Nothing happens" without asking for a direction, and a blindly
         # queued direction key then becomes a move or a melee attack. Only answer the prompt if it's
         # there, and remember wands that turned out empty.
+        self._last_wand_use_step = self.step_count   # WISH_TELEPORT_ROUTE: a wish from a wand
         with self.atom_operation():
             self.step(A.Command.ZAP)
             if 'carrying so much stuff' in self.message:
@@ -1674,6 +1729,14 @@ class Agent:
         with self.atom_operation():
             dy, dx = direction
             direction = self.calc_direction(self.blstats.y, self.blstats.x, self.blstats.y + dy, self.blstats.x + dx)
+            # the answer to "In what direction?" is a key: 'ne' is two keys and 'n' is vi-key south-east
+            direction = {
+                'n': A.CompassDirection.N, 's': A.CompassDirection.S,
+                'e': A.CompassDirection.E, 'w': A.CompassDirection.W,
+                'ne': A.CompassDirection.NE, 'se': A.CompassDirection.SE,
+                'nw': A.CompassDirection.NW, 'sw': A.CompassDirection.SW,
+                '.': A.MiscDirection.WAIT,
+            }[direction]
             success = [False]
 
             def type_letters():
@@ -1805,10 +1868,21 @@ class Agent:
             return False
         return self.is_safe_to_pray(jf_config.WELD_PRAY_GAP)
 
+    def no_free_hand(self):
+        """The engraving check: engrave.c freehand() with FREEHAND_FIX (a welded one-hander beside an uncursed shield
+        still leaves a hand to write with), else hands_welded() (any shield counts)."""
+        if not jf_config.FREEHAND_FIX:
+            return self.hands_welded()
+        main = self.inventory.items.main_hand
+        if main is None or main.status != Item.CURSED:
+            return False
+        shield = self.inventory.items.off_hand
+        return bool(getattr(main.objs[0], 'bi', False)) or (shield is not None and shield.status == Item.CURSED)
+
     def can_engrave(self):
         if self.character.prop.polymorph:
             return False  # TODO: only for handless monsters (which cannot write)
-        if self.hands_welded():
+        if self.no_free_hand():
             return False
         return (self.blstats.y, self.blstats.x) != self._forbidden_engrave_position
 
@@ -2276,7 +2350,7 @@ class Agent:
                 yielded = True
                 yield True
                 self.character.parse_enhance_view()
-                # self.character.parse_spellcast_view()
+                self.character.parse_spellcast_view()
 
             move_priority_heatmap, actions = combat.fight_heur.get_priorities(self)
             actions.extend(combat.fight_heur.get_move_actions(self, dis, move_priority_heatmap))
@@ -2321,7 +2395,7 @@ class Agent:
                     a[1][0] in ('melee', 'kick') and self._spore_unsafe_at(self.blstats.y + a[1][1],
                                                                           self.blstats.x + a[1][2]))]
             if allow_attack_all:
-                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap')]
+                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap', 'force_bolt')]
                 if attack_actions:
                     actions = attack_actions
 
@@ -2455,6 +2529,11 @@ class Agent:
                 fired = self.fire(ammo, dir)
                 assert fired, (ammo, dir)
                 return wait_counter
+
+        elif best_action[0] == 'force_bolt':
+            _, dy, dx = best_action
+            self.cast('force bolt', direction=(dy, dx))
+            return wait_counter
 
         elif best_action[0] == 'elbereth':
             assert self.inventory.engraving_below_me.lower() != 'elbereth'
@@ -2705,8 +2784,9 @@ class Agent:
             yield False
 
     def should_cast_heal(self):
-        # TODO: consider casting for other classes
-        if self.character.role != self.character.HEALER:
+        # any role that knows healing (a Monk's starting book is healing one time in three)
+        # spell.c: Stressed or worse, "Your concentration falters while carrying so much stuff" (a lost turn)
+        if self.blstats.carrying_capacity >= 2:
             return False
         if 'healing' not in self.character.known_spells:
             return False
@@ -2721,6 +2801,9 @@ class Agent:
         return self.blstats.energy >= 5 and low_hp
 
     def should_cast_extra_heal(self):
+        # spell.c: Stressed or worse, "Your concentration falters while carrying so much stuff" (a lost turn)
+        if self.blstats.carrying_capacity >= 2:
+            return False
         if 'extra healing' not in self.character.known_spells:
             return False
         if self.blstats.hunger_state >= Hunger.FAINTING:
@@ -2751,15 +2834,16 @@ class Agent:
                 return
 
 
-        # if self.should_cast_extra_heal():
-        #     yield True
-        #     self.cast('extra healing', direction=(0, 0))
-        #     return
+        # a Healer starts with healing and extra healing: cast them before potions and prayer
+        if self.should_cast_extra_heal():
+            yield True
+            self.cast('extra healing', direction=(0, 0))
+            return
 
-        # if self.should_cast_heal():
-        #     yield True
-        #     self.cast('healing', direction=(0, 0))
-        #     return
+        if self.should_cast_heal():
+            yield True
+            self.cast('healing', direction=(0, 0))
+            return
 
         # hypothesis (astra guard.py stop list): stoning, sliming, strangling and food poisoning /
         # terminal illness kill within a few turns; prayer fixes all of them, so a riskier-than-usual
@@ -2793,13 +2877,9 @@ class Agent:
 
         items = [item for item in flatten_items(self.inventory.items) if item.is_unambiguous() and
                  item.category == nh.POTION_CLASS and item.object.name in ['healing', 'extra healing', 'full healing']]
-        # the old "HP < 8" clause drank both starting potions on scratches at turn ~500; keep them for
-        # real crises, and only when a prayer (free, invulnerable while praying) would not fix it now
-        prayer_fixes_hp = self.is_safe_to_pray(500) and \
-            (self.blstats.hitpoints * 7 <= self.blstats.max_hitpoints or self.blstats.hitpoints <= 5)
         if (
                 (self.blstats.hitpoints < 1 / 3 * self.blstats.max_hitpoints
-                 or self.blstats.hitpoints <= 5) and items and not poly_buffer and not prayer_fixes_hp
+                 or self.blstats.hitpoints < 8) and items and not poly_buffer
         ):
             yield True
             self.inventory.quaff(items[0])
@@ -3227,7 +3307,7 @@ class Agent:
                         for field in ('role', 'race', 'alignment', 'gender', 'self_glyph'):
                             setattr(self.character, field, getattr(prev, field))
                     self.character.parse_enhance_view()
-                    # self.character.parse_spellcast_view()
+                    self.character.parse_spellcast_view()
                     self.step(A.Command.AUTOPICKUP)
                     if 'Autopickup: ON' in self.message:
                         self.step(A.Command.AUTOPICKUP)

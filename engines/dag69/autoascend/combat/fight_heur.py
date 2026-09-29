@@ -8,7 +8,7 @@ from ..glyph import G, MON, Hunger
 from .. import jf_config, utils
 from ..item import Item
 from ..utils import adjacent
-from .monster_utils import is_monster_faster, is_dangerous_monster, ignores_elbereth, \
+from .monster_utils import is_monster_faster, is_dangerous_monster, \
     ONLY_RANGED_SLOW_MONSTERS, EXPLODING_MONSTERS, WEAK_MONSTERS, consider_melee_only_ranged_if_hp_full
 from .movement_priority import draw_monster_priority_positive, draw_monster_priority_negative
 from .utils import wielding_ranged_weapon, line_dis_from, inside
@@ -52,23 +52,6 @@ def _spore_blast_hits_people(agent, y, x):
     return False
 
 
-# hypothesis: a gas spore's death explosion deals 4d6 to every square around it, and the bot shoots
-# (or, when cornered, melees) spores with no regard for who stands next to them. On the long Dlvl 1
-# grind the pet trails the character and keeps getting caught: "You kill poor Hachi!" costs -15
-# alignment and often -5 Luck, so the next prayer is answered with "Thou art arrogant" and the
-# god stays angry -- the hunger and low-HP prayers the grind relies on then fail and the character
-# starves or dies on Dlvl 1. Never set off a spore while a pet or peaceful is in its blast.
-def explosion_would_hit_friend(agent, y, x):
-    peaceful_mask = agent.monster_tracker.peaceful_monster_mask
-    for y2 in range(max(0, y - 1), min(agent.glyphs.shape[0], y + 2)):
-        for x2 in range(max(0, x - 1), min(agent.glyphs.shape[1], x + 2)):
-            if (y2, x2) == (y, x):
-                continue
-            if agent.glyphs[y2, x2] in G.PETS or peaceful_mask[y2, x2]:
-                return True
-    return False
-
-
 def melee_monster_priority(agent, monsters, monster):
     _, y, x, mon, _ = monster
     ret = 1
@@ -90,7 +73,7 @@ def melee_monster_priority(agent, monsters, monster):
             if mon.mname == 'gas spore':
                 ret -= 5
 
-    if mon.mname == 'gas spore' and not explosion_would_hit_friend(agent, y, x):
+    if mon.mname == 'gas spore':
         if spore_blast_hits_friend(agent, y, x):
             return ret - 200
         # handle a specific case when you are trapped by a gas spore
@@ -203,8 +186,6 @@ def ranged_priority(agent, dy, dx, monsters):
                 return None
             assert len(monster) == 1
             _, _, _, mon, _ = monster[0]
-            if mon.mname == 'gas spore' and explosion_would_hit_friend(agent, y, x):
-                return None
             dis = line_dis_from(agent, y, x)
             if dis > agent.character.get_range(launcher, ammo):
                 return None
@@ -534,6 +515,8 @@ def force_bolt_actions(agent, monsters):
     if 'force bolt' not in character.known_spells or agent.blstats.energy < 5:
         return []
     if agent.blstats.hunger_state >= Hunger.WEAK or character.prop.polymorph:  # "too hungry to cast"
+        return []
+    if agent.blstats.carrying_capacity >= 2:  # Stressed: "Your concentration falters"
         return []
     if character.spell_fail_chance.get('force bolt', 1) > 0.3:
         return []
