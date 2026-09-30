@@ -76,6 +76,7 @@ class Agent:
         self._no_kick_until = -1      # wounded legs: no kicking until this turn
         self._last_resort_stairs_turn = -10 ** 9
         self._last_resort_dig_turn = -1   # LAST_RESORT_DIG: at most one zap per turn
+        self._last_resort_tele_turn = None
         self._last_resort_zapped = set()  # LR_WAND_ONCE: glyphs of unknown wands the last resort already zapped
         self.prayer_failed = False
         self._monk_meat_meals = 0
@@ -2985,6 +2986,22 @@ class Agent:
                     self._last_resort_stairs_turn = self.blstats.time
                     self.move('<')
                     return
+                # a known scroll of teleportation is the cleanest way out of melee (read.c: a random spot on the
+                # level; cursed or confused, a random level): the unknown-scroll gamble below read every unknown
+                # scroll, yet 12 of 48 dead elven Wizards still carried an identified one
+                if level.dungeon_number != Level.SOKOBAN and not self.character.prop.blind and \
+                        self._last_resort_tele_turn != self.blstats.time:
+                    scroll = next((i for i in self.inventory.items if i.category == nh.SCROLL_CLASS and
+                                   i.is_unambiguous() and i.object.name == 'teleportation' and
+                                   i.shop_status == Item.NOT_SHOP), None)
+                    if scroll is not None:
+                        yield True
+                        self._last_resort_tele_turn = self.blstats.time
+                        self.log(f'LAST RESORT: reading {scroll.text!r}')
+                        with self.atom_operation():
+                            self.step(A.Command.READ)
+                            self.type_text(self.inventory.items.get_letter(scroll))
+                        return
                 # DESPERATE_PRAYER_GAP: a prayer that may come too soon beats dying. pray.c fixes critically low HP
                 # while the timeout is <= 200; after a successful prayer it is rnz(350), which leaves ~62% of
                 # prayers working 250 turns later and ~77% after 400 (the usual rule waits 500: ~87%). A failure

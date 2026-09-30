@@ -38,5 +38,14 @@ Every engine:
   the vi-key for south-east, so every directional cast went wrong; it now sends the compass action
 - no casting while Stressed ("Your concentration falters while carrying so much stuff", a lost turn)
 - a known scroll of magic mapping is read from Dlvl 3 when no stairs down are known
+- a known scroll of teleportation is read as a last resort (the engine read every unknown scroll when about
+  to die, but never an identified teleportation: 12 of 48 dead elven Wizards carried one)
+- force bolt never flies on into a pet or a peaceful standing behind the target (a Wizard's bolt killed a
+  jackal and hit its own housecat, which turned on it)
+- Wizards keep off metal body armor, metal gloves and heavy shields, which push force bolt to 60-80% failure
+  (found by our `nethackers evolve` run)
+- Rogues grind on Dlvl 1 only: daglar (2f207d4) found jawfish's XL 5-6 Dlvl-3 grind killing the weak roles;
+  measured per role on this engine, it holds for Rogues (+3.3 and +4.1 on two identities, 48 paired games
+  each) and not for Wizards, Priests, Valkyries or Barbarians
 - Sokoban desync, phantom altars, dragon-scale parsing, cockatrice touch guard, stoning cure,
   no shop-door kicks, trees unwalkable

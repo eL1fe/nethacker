@@ -495,6 +495,10 @@ def _force_bolt_tail_safe(agent, level, shop, y0, x0, sy, sx):
             return True
         if shop is not None and shop[y, x]:
             return False
+        # a bolt that kills the target flies on into whatever stands behind it: a jackal's bolt hit the
+        # Wizard's own housecat, which turned on it and killed it
+        if k > 1 and (agent.glyphs[y, x] in G.PETS or agent.monster_tracker.peaceful_monster_mask[y, x]):
+            return False
         if agent.glyphs[y, x] in G.OBJECTS:
             objects += 1
             if objects >= 2:

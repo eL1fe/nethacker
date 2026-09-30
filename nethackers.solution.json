@@ -29,7 +29,9 @@
     "github.com/vlomshakov/nethacker@8b492ce95e6988b0eae2de84aef1379f885a1306",
     "github.com/CleverShovel/nethacker@0d1fb22498024cdcac06be9d15d0f70e8cae803c",
     "github.com/eL1fe/nethacker@acf4a1de674597d5f717ddd174d85bcd7190e60a",
-    "github.com/eL1fe/nethacker@012dce4eef00fb92e814e2aa5a405c1eed015e96"
+    "github.com/eL1fe/nethacker@012dce4eef00fb92e814e2aa5a405c1eed015e96",
+    "github.com/daglar-dragomirov/nethacker@2f207d46e760a85cc120feb1d6c6a4cf8bc1ae51",
+    "github.com/eL1fe/nethacker@11fb88909b798e17244cd72cfc0b69691f8a374b"
   ],
   "entrypoint": "bot.py"
 }

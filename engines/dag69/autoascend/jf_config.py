@@ -89,6 +89,8 @@ NO_DIP_WITH_TOOL = True
 # e.g. {5: 3, 7: 2} keeps the random-monster cap (depth + XL) / 2 at 4 from XL 5 (global_logic._grind_level)
 # train 3 (early-game A027): XL 5-6 grind on Dlvl 3, XL 7 on Dlvl 2 (cap 4): prayers 12.2 -> 7.2/game, grind losses 10 -> 5
 GRIND_LEVELS = {5: 3, 7: 2}
+# roles whose grind stays on Dlvl 1 (see global_logic._grind_level)
+GRIND_DLVL1_ROLES = ('Rogue',)
 # the tour skips to its next milestone after this many turns within 8 squares of one spot on one level
 # (0: never). Stalls held 12 of 90 games for 1500-14000 turns, fainting through hunger prayers.
 TOUR_STALL_TURNS = 1500
