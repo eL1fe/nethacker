@@ -147,6 +147,30 @@ def ranger_point_blank_priority(agent, monster, default):
         return default
 
 
+# hypothesis: a Valkyrie's kitten that steps out of sight into a dark corridor is still there: the dagger
+# thrown at a monster behind it kills the pet ("It yowls!  You kill it!  You hear the rumble of distant
+# thunder": -15 alignment, -5 Luck), every prayer of the Dlvl 1-3 grind then fails and she starves (judge
+# seed 0 died that way at T3395 on Dlvl 1; seed 13 hit an unseen pet twice: "It yelps!  The dagger hits it").
+# Only visible floor squares are known to be free of the pet. Every role that throws or fires (Rogue daggers,
+# Ranger arrows) faces the same risk, so it is not gated by role.
+UNSEEN_PET_TURNS = 20
+
+
+def unseen_pet_may_be_at(agent, y, x):
+    where = getattr(agent, '_last_pet_where', None)
+    if where is None or agent.glyphs[y, x] in G.VISIBLE_FLOOR or utils.any_in(agent.glyphs, G.PETS):
+        return False
+    key, turn, positions = where
+    elapsed = agent.blstats.time - turn
+    if key != (agent.blstats.dungeon_number, agent.blstats.level_number) or elapsed > UNSEEN_PET_TURNS:
+        return False
+    reach = 2 + int(1.5 * elapsed)   # a kitten is speed 18 against our 12
+    if any(max(abs(py - y), abs(px - x)) <= reach for py, px in positions):
+        agent.log(f'UNSEEN PET may be at {(int(y), int(x))}: last seen {positions} {elapsed} turns ago, no throw')
+        return True
+    return False
+
+
 def ranged_priority(agent, dy, dx, monsters):
     if missiles_risk_the_watch(agent):
         return None
@@ -177,6 +201,9 @@ def ranged_priority(agent, dy, dx, monsters):
             return None
 
         if agent.glyphs[y, x] in G.PETS or not agent.current_level().walkable[y, x]:
+            return None
+
+        if agent.glyphs[y, x] not in G.MONS and line_dis_from(agent, y, x) > 1 and unseen_pet_may_be_at(agent, y, x):
             return None
 
         if agent.glyphs[y, x] in G.MONS:
@@ -211,6 +238,8 @@ def ranged_priority(agent, dy, dx, monsters):
                     break
                 if agent.glyphs[by, bx] in G.PETS or \
                         (agent.glyphs[by, bx] in G.MONS and not any(m[1] == by and m[2] == bx for m in monsters)):
+                    return None
+                if agent.glyphs[by, bx] not in G.MONS and unseen_pet_may_be_at(agent, by, bx):
                     return None
             if dis == 1 and ranger_point_blank(agent, launcher, ammo):
                 ret = ranger_point_blank_priority(agent, monster[0], ret)

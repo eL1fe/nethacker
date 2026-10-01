@@ -54,6 +54,7 @@ class Agent:
         self.last_observation = None
 
         self._last_pet_seen = 0
+        self._last_pet_where = None    # (level key, turn, [(y, x), ...]) where the pet was last on screen
         self._corpse_debug_pos = None
         self._faint_msg_turn = None    # FAINT_MEASURE_FIX: turn of the screen that first showed a faint
         self._paralysis_end_turn = -10 ** 9   # STARVE_UNMEASURED_GAP: turn of the last 'You can move again'
@@ -950,6 +951,9 @@ class Agent:
 
         if utils.any_in(self.glyphs, G.PETS):
             self._last_pet_seen = self.blstats.time
+            pets = np.argwhere(utils.isin(self.glyphs, G.PETS))
+            self._last_pet_where = ((self.blstats.dungeon_number, self.blstats.level_number), self.blstats.time,
+                                    [(int(y), int(x)) for y, x in pets])
 
         level = self.current_level()
 

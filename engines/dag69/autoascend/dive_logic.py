@@ -4112,7 +4112,8 @@ class DiveLogic:
         terrain = level.objects[py, px]
         if not (terrain in PLAIN_FLOOR or (terrain == -1 and level.walkable[py, px]) or
                 (DIG_IN_PITS and terrain in PITS)) or \
-                level.shop[py, px] or level.shop_interior[py, px] or (level.key(), (py, px)) in self._bad_dig_spots:
+                ((level.shop[py, px] or level.shop_interior[py, px]) and not self._shop_dig_ok(py, px)) or \
+                (level.key(), (py, px)) in self._bad_dig_spots:
             return False
         # the square we arrived on by stairs was never seen ('@' covers it: terrain -1), but it is a staircase
         # (rescue agent, 78a30e1: 'The beam bounces off the stairs' emptied wands of digging in 6 of 90 games)
@@ -4121,6 +4122,29 @@ class DiveLogic:
         # a hole next to water or lava fills with it (dig.c fillholetyp: n moat squares around fill it
         # with probability n/(n+1)); only islands with no dry square (Medusa variants) accept the risk
         return self._wet_neighbours(py, px) <= max_wet
+
+    def _shop_dig_ok(self, py, px):
+        """An empty shop floor square an Archeologist may dig through.
+        hypothesis: an Archeologist's dug hole often drops it into a shop, where the shopkeeper sits in the
+        door and never lets a pick-axe carrier out (shk.c shk_move: badinv); with the dive's digging restricted
+        to non-shop floor the bot then never leaves -- seeds 5, 6 and 14 fought a small mimic among the stock
+        until they starved. shk.c shopdig() grabs the pack of a customer falling through only if they owe
+        something (billct or debit), and dokick.c impact_drop bills only for goods falling with us, so a
+        bare interior square, dug with nothing unpaid in the pack, takes us down with everything we carry.
+        Gated to Archeologists (the early dig-divers that land in shops)."""
+        agent = self.agent
+        level = agent.current_level()
+        if not self._arc_early_dig() or not level.shop_interior[py, px] or \
+                level.objects[py, px] not in PLAIN_FLOOR:
+            return False
+        if level.item_count[py, px] or len(level.items[py, px]):
+            return False
+        if (py, px) == (agent.blstats.y, agent.blstats.x):
+            if agent.inventory.items_below_me:
+                return False
+        elif nh.glyph_is_object(int(agent.glyphs[py, px])) or agent.monster_tracker.monster_mask[py, px]:
+            return False
+        return not any(i.shop_status == Item.UNPAID for i in flatten_items(agent.inventory.items))
 
     def try_dig_down(self):
         """Dig down with a pick-axe (or zap a wand of digging down): one level per hole, and on

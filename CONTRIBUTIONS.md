@@ -47,5 +47,12 @@ Every engine:
 - Rogues grind on Dlvl 1 only: daglar (2f207d4) found jawfish's XL 5-6 Dlvl-3 grind killing the weak roles;
   measured per role on this engine, it holds for Rogues (+3.3 and +4.1 on two identities, 48 paired games
   each) and not for Wizards, Priests, Valkyries or Barbarians
+- Archeologists dig down out of a shop they fell into, through an empty floor square when nothing is owed:
+  the shopkeeper blocks the door for a pick-axe carrier and digging in shops was forbidden, so dig-diving
+  Archeologists starved in there (found by our `nethackers evolve` run; +6.0, +5.3, +2.9, +1.0 points on four
+  Archeologist identities, paired fresh seeds)
+- no role throws or fires where its pet may be standing out of sight: a dagger thrown past a kitten that had
+  stepped into a dark corridor killed it (-15 alignment, -5 Luck), and every prayer failed after that (found by
+  our `nethackers evolve` run for Valkyries; extended to Rogues and Rangers)
 - Sokoban desync, phantom altars, dragon-scale parsing, cockatrice touch guard, stoning cure,
   no shop-door kicks, trees unwalkable
