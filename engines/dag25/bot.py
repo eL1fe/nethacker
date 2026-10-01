@@ -6,17 +6,17 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from nethackers.contracts.bot import ArenaBot
-
 _cache_root = Path(tempfile.gettempdir()) / "nethack_arena_submission_cache"
 _cache_root.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("XDG_CACHE_HOME", str(_cache_root / "xdg"))
 os.environ.setdefault("NUMBA_CACHE_DIR", str(_cache_root / "numba"))
 
-from arena_adapter import AutoAscendDriver  # noqa: E402
+from adapter_pf_base import AutoAscendDriver  # noqa: E402
 
 
 class Bot:
+    """daglar e29eb82's base engine (vkurenkov jawfish s25 238c254 + daglar's additions), on its own."""
+
     def __init__(self) -> None:
         self._driver = AutoAscendDriver()
 
@@ -30,5 +30,5 @@ class Bot:
         self._driver.close()
 
 
-def make_agent() -> ArenaBot:
+def make_agent():
     return Bot()

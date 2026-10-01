@@ -5,8 +5,8 @@ credit for those engines belongs to their authors (see `influences`). Ours are t
 routing table below (measured on eL1fe's held-out multi-role benchmark: paired games, fresh seeds)
 and the fixes listed at the end.
 
-Default engine: `dag69` (github.com/daglar-dragomirov/nethacker@69baf4943e2f47a23715b3814438b180c3c64b75:
-vkurenkov's jawfish 21e6539 with the castle crossing, plus daglar's additions)
+Default engine: `dag25` (github.com/daglar-dragomirov/nethacker@e29eb8281b13784716d9121e4f01ec60c2bb2165: the base engine of daglar's e29eb82,
+vkurenkov's jawfish s25 238c254 plus daglar's additions), with every eL1fe fix below ported onto it
 
 - Healer (human): `vlom8b4` (github.com/vlomshakov/nethacker@8b492ce95e6988b0eae2de84aef1379f885a1306), +3.7 points over 96 paired
   human Healer games against the previous router
@@ -27,7 +27,7 @@ Every engine:
 - never wield darts, shuriken, boomerangs, arrows or bolts for melee: a Tourist bashed with its +2
   darts and never threw one
 
-`dag69` (every role not listed above):
+`dag25` (every role not listed above):
 
 - healing spells: AutoAscend never parsed the spell list, so no role ever cast healing; now a Healer,
   or a Monk or Wizard that knows healing, casts it at low HP
@@ -44,7 +44,8 @@ Every engine:
   jackal and hit its own housecat, which turned on it)
 - Wizards keep off metal body armor, metal gloves and heavy shields, which push force bolt to 60-80% failure
   (found by our `nethackers evolve` run)
-- Rogues grind on Dlvl 1 only: daglar (2f207d4) found jawfish's XL 5-6 Dlvl-3 grind killing the weak roles;
+- the weak-role Dlvl-1 grind of the s25 line kept for Rogues only (Wizards with force bolt lose -12.6 on Dlvl 1);
+  daglar (2f207d4) found jawfish's XL 5-6 Dlvl-3 grind killing the weak roles;
   measured per role on this engine, it holds for Rogues (+3.3 and +4.1 on two identities, 48 paired games
   each) and not for Wizards, Priests, Valkyries or Barbarians
 - Archeologists dig down out of a shop they fell into, through an empty floor square when nothing is owed:

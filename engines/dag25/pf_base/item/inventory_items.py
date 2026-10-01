@@ -1,6 +1,6 @@
 import nle.nethack as nh
 
-from autoascend import objects as O
+from pf_base import objects as O
 
 
 class InventoryItems:
