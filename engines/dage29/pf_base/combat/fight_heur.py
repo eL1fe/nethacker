@@ -4,9 +4,8 @@ from itertools import product
 import numpy as np
 from scipy import signal
 
-from ..glyph import G, MON, Hunger
+from ..glyph import G, MON
 from .. import jf_config, utils
-from ..character import Character
 from ..item import Item
 from ..utils import adjacent
 from .monster_utils import is_monster_faster, is_dangerous_monster, \
@@ -155,30 +154,6 @@ def ranger_point_blank_priority(agent, monster, default):
         return default
 
 
-# hypothesis: a Valkyrie's kitten that steps out of sight into a dark corridor is still there: the dagger
-# thrown at a monster behind it kills the pet ("It yowls!  You kill it!  You hear the rumble of distant
-# thunder": -15 alignment, -5 Luck), every prayer of the Dlvl 1-3 grind then fails and she starves (judge
-# seed 0 died that way at T3395 on Dlvl 1; seed 13 hit an unseen pet twice: "It yelps!  The dagger hits it").
-# Only visible floor squares are known to be free of the pet. Every role that throws or fires (Rogue daggers,
-# Ranger arrows) faces the same risk, so it is not gated by role.
-UNSEEN_PET_TURNS = 20
-
-
-def unseen_pet_may_be_at(agent, y, x):
-    where = getattr(agent, '_last_pet_where', None)
-    if where is None or agent.glyphs[y, x] in G.VISIBLE_FLOOR or utils.any_in(agent.glyphs, G.PETS):
-        return False
-    key, turn, positions = where
-    elapsed = agent.blstats.time - turn
-    if key != (agent.blstats.dungeon_number, agent.blstats.level_number) or elapsed > UNSEEN_PET_TURNS:
-        return False
-    reach = 2 + int(1.5 * elapsed)   # a kitten is speed 18 against our 12
-    if any(max(abs(py - y), abs(px - x)) <= reach for py, px in positions):
-        agent.log(f'UNSEEN PET may be at {(int(y), int(x))}: last seen {positions} {elapsed} turns ago, no throw')
-        return True
-    return False
-
-
 def ranged_priority(agent, dy, dx, monsters):
     if missiles_risk_the_watch(agent):
         return None
@@ -209,9 +184,6 @@ def ranged_priority(agent, dy, dx, monsters):
             return None
 
         if agent.glyphs[y, x] in G.PETS or not agent.current_level().walkable[y, x]:
-            return None
-
-        if agent.glyphs[y, x] not in G.MONS and line_dis_from(agent, y, x) > 1 and unseen_pet_may_be_at(agent, y, x):
             return None
 
         if agent.glyphs[y, x] in G.MONS:
@@ -246,8 +218,6 @@ def ranged_priority(agent, dy, dx, monsters):
                     break
                 if agent.glyphs[by, bx] in G.PETS or \
                         (agent.glyphs[by, bx] in G.MONS and not any(m[1] == by and m[2] == bx for m in monsters)):
-                    return None
-                if agent.glyphs[by, bx] not in G.MONS and unseen_pet_may_be_at(agent, by, bx):
                     return None
             if dis == 1 and ranger_point_blank(agent, launcher, ammo):
                 ret = ranger_point_blank_priority(agent, monster[0], ret)
@@ -510,8 +480,6 @@ def get_available_actions(agent, monsters):
 
             actions.extend(get_potential_wand_usages(agent, monsters, dy, dx))
 
-    actions.extend(force_bolt_actions(agent, monsters))
-
     to_pickup = decide_what_to_pickup(agent)
     if to_pickup:
         actions.append((15, ('pickup', to_pickup)))
@@ -520,105 +488,6 @@ def get_available_actions(agent, monsters):
     actions.extend(wait_action(agent, monsters))
 
     return actions
-
-
-FORCE_BOLT_RANGE = 6  # the bolt flies rn1(8, 6) squares, so 6 always reaches
-
-
-FORCE_BOLT_MAX_RANGE = 13  # rn1(8, 6)
-
-
-def _force_bolt_tail_safe(agent, level, shop, y0, x0, sy, sx):
-    """The bolt flies on past the monster it hits (bhit: range -= 3) and breaks fragile objects on its way:
-    one killed a gnome zombie in a shop doorway and shattered a potion behind it (100 zorkmids, then the
-    shopkeeper). Refuse a line that reaches a known shop, or two visible objects (shop stock we have not
-    entered yet) before a wall; a lone corpse is no reason to melee instead."""
-    objects = 0
-    wizard = agent.character.role == Character.WIZARD
-    for k in range(1, FORCE_BOLT_MAX_RANGE + 1):
-        y, x = y0 + sy * k, x0 + sx * k
-        if not (0 <= y < level.walkable.shape[0] and 0 <= x < level.walkable.shape[1]):
-            return True
-        # (same hypothesis as Agent._update_level_shops) a seen wall stops the bolt (zap.c bhit: !ZAP_POS) before
-        # the shop beyond it, and the dilated shop mask also covers the shop's walls and the rock at its corners,
-        # where no stock lies: public s7's giant bat in the corridor running along a shop was meleed. Only a floor
-        # square or a door (the bolt breaks a closed one) of the shop refuses the line. Wizard only, as there.
-        if wizard and level.objects[y, x] in G.WALL and agent.glyphs[y, x] in G.WALL:
-            return True
-        if shop is not None and shop[y, x] and \
-                not (wizard and not level.walkable[y, x] and agent.glyphs[y, x] not in G.DOOR_CLOSED):
-            return False
-        # a bolt that kills the target flies on into whatever stands behind it: a jackal's bolt hit the
-        # Wizard's own housecat, which turned on it and killed it
-        if k > 1 and (agent.glyphs[y, x] in G.PETS or agent.monster_tracker.peaceful_monster_mask[y, x]):
-            return False
-        if agent.glyphs[y, x] in G.OBJECTS:
-            objects += 1
-            if objects >= 2:
-                return False
-        if not level.walkable[y, x] and level.seen[y, x]:
-            return True
-    return True
-
-
-def force_bolt_actions(agent, monsters):
-    """Cast force bolt (2d6, rarely misses) at the nearest hostile on a straight, clear line.
-
-    Wizards start knowing it and it hits about twice as hard as their quarterstaff, yet the fight
-    heuristic only ever meleed; rank the bolt just above meleeing the same monster.
-    Ported from CleverShovel/nethacker@0d1fb22.
-    """
-    character = agent.character
-    if 'force bolt' not in character.known_spells or agent.blstats.energy < 5:
-        return []
-    if agent.blstats.hunger_state >= Hunger.WEAK or character.prop.polymorph:  # "too hungry to cast"
-        return []
-    if agent.blstats.carrying_capacity >= 2:  # Stressed: "Your concentration falters"
-        return []
-    if character.spell_fail_chance.get('force bolt', 1) > 0.3:
-        return []
-    if agent.inventory.engraving_below_me.lower() == 'elbereth':
-        return []
-    y0, x0 = agent.blstats.y, agent.blstats.x
-    level = agent.current_level()
-    # the bolt breaks fragile objects on its way: a shop's camera cost 200 zorkmids, then the shopkeeper
-    if level.shop_interior[y0, x0] or utils.isin(agent.glyphs, G.SHOPKEEPER).any():
-        return []
-    walkable = level.walkable
-    peaceful = agent.monster_tracker.peaceful_monster_mask
-    # ... and whatever lies under the monster it kills: a bolt from a shop's doorway shattered a potion
-    shop = utils.dilate(level.shop_interior, radius=1) if level.shop_interior.any() else None
-    # hypothesis: a Pw reserve for real threats. Pw comes back ~1 point per 8 turns at XL 6-8 (allmain.c), so each
-    # 5-Pw bolt is ~40 turns of regeneration, and bolts spent on newts, lichens, jackals and rats left Wizards at
-    # Pw 1/85 and 4/44 when a dingo or a pack of rothes came (judge games: meleed with the quarterstaff, then died
-    # praying). Below half Pw (and above half HP), monsters a quarterstaff kills in one or two blows (makemon
-    # difficulty <= 2, as REST_FIGHT_WEAK) get melee; the bolt is kept for everything else.
-    bl = agent.blstats
-    save_pw = bl.energy * 2 < bl.max_energy and bl.hitpoints * 2 > bl.max_hitpoints
-    best = None
-    for monster in monsters:
-        _, y, x, mon, _ = monster
-        dy, dx = y - y0, x - x0
-        dist = max(abs(dy), abs(dx))
-        if dist == 0 or dist > FORCE_BOLT_RANGE or not (dy == 0 or dx == 0 or abs(dy) == abs(dx)):
-            continue
-        if save_pw and getattr(mon, 'difficulty', 99) <= 2 and mon.mname not in ONLY_RANGED_SLOW_MONSTERS:
-            continue
-        if mon.mname in EXPLODING_MONSTERS and dist == 1:
-            continue
-        sy, sx = int(np.sign(dy)), int(np.sign(dx))
-        cy, cx, clear = y0, x0, True
-        for _ in range(dist - 1):
-            cy, cx = cy + sy, cx + sx
-            if not walkable[cy, cx] or agent.glyphs[cy, cx] in G.PETS or peaceful[cy, cx]:
-                clear = False
-                break
-        if not clear or not _force_bolt_tail_safe(agent, level, shop, y0, x0, sy, sx):
-            continue
-        priority = melee_monster_priority(agent, monsters, monster) + 2 if dist == 1 else 14
-        if best is None or priority > best[0]:
-            best = (priority, ('force_bolt', sy, sx))
-    return [best] if best is not None else []
 
 
 def decide_what_to_pickup(agent):
@@ -692,7 +561,7 @@ def get_priorities(agent):
     priority -= priority[agent.blstats.y, agent.blstats.x]
 
     actions = get_available_actions(agent, monsters)
-    if not any(a[1][0] in ('melee', 'kick', 'ranged', 'force_bolt') for a in actions):
+    if not any(a[1][0] in ('melee', 'kick', 'ranged') for a in actions):
         actions.extend(goto_action(agent, priority, monsters))
     return priority, actions
 

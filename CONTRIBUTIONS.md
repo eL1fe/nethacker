@@ -8,6 +8,9 @@ and the fixes listed at the end.
 Default engine: `dag25` (github.com/daglar-dragomirov/nethacker@e29eb8281b13784716d9121e4f01ec60c2bb2165: the base engine of daglar's e29eb82,
 vkurenkov's jawfish s25 238c254 plus daglar's additions), with every eL1fe fix below ported onto it
 
+- Wizard: `dage29` (github.com/daglar-dragomirov/nethacker@e29eb8281b13784716d9121e4f01ec60c2bb2165, its base engine
+  unchanged): its Wizards never cast force bolt in combat and grind on Dlvl 1; against `dag25` with our force bolt,
+  +3.1 points over 240 paired Wizard games on five identities (and +7.2 on the verified board)
 - Healer (human): `vlom8b4` (github.com/vlomshakov/nethacker@8b492ce95e6988b0eae2de84aef1379f885a1306), +3.7 points over 96 paired
   human Healer games against the previous router
 - Healer/gnome: `dagfc5` (github.com/daglar-dragomirov/nethacker@fc50360e721e98e5a322dbd6282c703718bd4d46)
@@ -27,7 +30,7 @@ Every engine:
 - never wield darts, shuriken, boomerangs, arrows or bolts for melee: a Tourist bashed with its +2
   darts and never threw one
 
-`dag25` (every role not listed above):
+`dag25` (every role not listed above; the Wizard items below no longer play, Wizards are routed to `dage29`):
 
 - healing spells: AutoAscend never parsed the spell list, so no role ever cast healing; now a Healer,
   or a Monk or Wizard that knows healing, casts it at low HP
@@ -55,5 +58,9 @@ Every engine:
 - no role throws or fires where its pet may be standing out of sight: a dagger thrown past a kitten that had
   stepped into a dark corridor killed it (-15 alignment, -5 Luck), and every prayer failed after that (found by
   our `nethackers evolve` run for Valkyries; extended to Rogues and Rangers)
+- Knights never melee a floating eye they can see: its passive gaze froze them for ~100 turns, 3 of 10 early
+  Knight deaths on the judge's seeds (found by our `nethackers evolve` run)
+- Barbarians count A-class lawful minions (couatl, Aleax, Angel...) as ignoring Elbereth: a dig-diving Barbarian
+  engraved and dug on beside one until 5 HP (found by our `nethackers evolve` run)
 - Sokoban desync, phantom altars, dragon-scale parsing, cockatrice touch guard, stoning cure,
   no shop-door kicks, trees unwalkable

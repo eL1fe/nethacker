@@ -55,7 +55,6 @@ class Agent:
         self.last_observation = None
 
         self._last_pet_seen = 0
-        self._last_pet_where = None    # (level key, turn, [(y, x), ...]) where the pet was last on screen
         self._corpse_debug_pos = None
         self._faint_msg_turn = None    # FAINT_MEASURE_FIX: turn of the screen that first showed a faint
         self._paralysis_end_turn = -10 ** 9   # STARVE_UNMEASURED_GAP: turn of the last 'You can move again'
@@ -78,7 +77,6 @@ class Agent:
         self._no_kick_until = -1      # wounded legs: no kicking until this turn
         self._last_resort_stairs_turn = -10 ** 9
         self._last_resort_dig_turn = -1   # LAST_RESORT_DIG: at most one zap per turn
-        self._last_resort_tele_turn = None
         self._last_resort_zapped = set()  # LR_WAND_ONCE: glyphs of unknown wands the last resort already zapped
         self.prayer_failed = False
         self._monk_meat_meals = 0
@@ -739,9 +737,6 @@ class Agent:
         return any(o.name in ('pick-axe', 'dwarvish mattock')
                    for item in flatten_items(self.inventory.items) for o in item.objs)
 
-    _SHOP_DOORWAY = frozenset({SS.S_ndoor})
-    _CORRIDOR = frozenset({SS.S_corr, SS.S_litcorr})
-
     def _update_level_shops(self):
         level = self.current_level()
 
@@ -770,15 +765,6 @@ class Agent:
                      (utils.translate(wall_mask, 0, 1) & utils.translate(wall_mask, 0, -1))) & \
                     level.walkable
             walkable = level.walkable & ~entry
-            if self.character.role == Character.WIZARD:
-                # hypothesis: seen from the corridor through its door, a lit shop shows its door but not the wall
-                # squares beside it, so the door is no 'entry' above and the fill from the shopkeeper leaked out
-                # through it: public s7 marked the corridor and the next room as shop interior, which vetoes
-                # force bolt (fight_heur), and a giant bat killed the Wizard at full Pw (39 HP -> 0 with Pw 59/71,
-                # quarterstaff only). A door or doorway always bounds a room and a corridor is never shop floor.
-                # Wizard only: force bolt is the Wizard's weapon and the other roles' tuning saw the old mask.
-                entry |= utils.isin(level.objects, G.DOOR_OPENED, self._SHOP_DOORWAY) & level.walkable
-                walkable &= ~entry & ~utils.isin(level.objects, self._CORRIDOR)
             mask = utils.bfs(y, x, walkable=walkable, walkable_diagonally=walkable, can_squeeze=False) != -1
             mask = utils.dilate(mask, radius=1)
 
@@ -1030,9 +1016,6 @@ class Agent:
 
         if utils.any_in(self.glyphs, G.PETS):
             self._last_pet_seen = self.blstats.time
-            pets = np.argwhere(utils.isin(self.glyphs, G.PETS))
-            self._last_pet_where = ((self.blstats.dungeon_number, self.blstats.level_number), self.blstats.time,
-                                    [(int(y), int(x)) for y, x in pets])
 
         level = self.current_level()
 
@@ -1046,8 +1029,7 @@ class Agent:
         level.seen[mask] = True
         level.walkable[mask & (level.objects == -1)] = True
 
-        # trees (Monk quest home, some special levels) block movement like bars
-        mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED, G.BARS, G.TREE)
+        mask = utils.isin(self.glyphs, G.WALL, G.DOOR_CLOSED, G.BARS)
         level.seen[mask] = True
         level.objects[mask] = self.glyphs[mask]
         level.walkable[mask] = False
@@ -1909,14 +1891,6 @@ class Agent:
         with self.atom_operation():
             dy, dx = direction
             direction = self.calc_direction(self.blstats.y, self.blstats.x, self.blstats.y + dy, self.blstats.x + dx)
-            # the answer to "In what direction?" is a key: 'ne' is two keys and 'n' is vi-key south-east
-            direction = {
-                'n': A.CompassDirection.N, 's': A.CompassDirection.S,
-                'e': A.CompassDirection.E, 'w': A.CompassDirection.W,
-                'ne': A.CompassDirection.NE, 'se': A.CompassDirection.SE,
-                'nw': A.CompassDirection.NW, 'sw': A.CompassDirection.SW,
-                '.': A.MiscDirection.WAIT,
-            }[direction]
             success = [False]
 
             def type_letters():
@@ -2568,15 +2542,13 @@ class Agent:
                 yielded = True
                 yield True
                 self.character.parse_enhance_view()
-                self.character.parse_spellcast_view()
+                # self.character.parse_spellcast_view()
 
             move_priority_heatmap, actions = combat.fight_heur.get_priorities(self)
             actions.extend(combat.fight_heur.get_move_actions(self, dis, move_priority_heatmap))
 
             if self.character.prop.polymorph:
                 actions = list(filter(lambda x: x[1][0] != 'ranged', actions))
-
-            actions = [a for a in actions if not self._touch_petrifies(a[1])]
 
             if jf_config.PIT_AWARE_FIGHT and self.global_logic.dive.diving and self.in_pit() and \
                     any(utils.adjacent((self.blstats.y, self.blstats.x), (m[1], m[2])) for m in monsters):
@@ -2592,15 +2564,6 @@ class Agent:
 
             # FEYE_TELE: the same filter once the eye's corpse has nothing left to give (telepathy is ours)
             feye_tele = jf_config.FEYE_TELE and not jf_config.FEYE_FIX and self.character.telepathic
-            # hypothesis: a Knight never melees a floating eye it can see, telepathic or not (blindfolded, or the
-            # boxed-in Elbereth/150-turn rule below, as once telepathic). Its long sword (d8+1, St 15-16: no bonus)
-            # seldom one-shots an eye (2d8 HP), and each surviving eye freezes it 2 times in 3 for ~100 turns:
-            # 3 of the 10 early Knight deaths on the judge's seeds came 'while frozen by a monster's gaze', two of
-            # them from this deliberate pre-telepathy melee (s3 Dlvl 1 giant rat at 38/38 HP, s7 Dlvl 3 rock mole
-            # beside an Uruk-hai; s0 stumbled into one while confused by tripe, not this rule). The corpse's telepathy
-            # is only read by the blind-raven rule in the dive, worth far less than those games.
-            if jf_config.FEYE_TELE and not jf_config.FEYE_FIX and self.character.role == Character.KNIGHT:
-                feye_tele = True
             if (jf_config.FEYE_FIX or feye_tele) and not self.character.prop.blind:
                 # never melee a floating eye we can see: its passive gaze freezes us for up to 127 turns. The
                 # exploration's stall breaker (allow_attack_all, below) keeps only attacks, and the eye's -110
@@ -2678,7 +2641,7 @@ class Agent:
                     a[1][0] in ('melee', 'kick') and self._spore_unsafe_at(self.blstats.y + a[1][1],
                                                                           self.blstats.x + a[1][2]))]
             if allow_attack_all:
-                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap', 'force_bolt')]
+                attack_actions = [a for a in actions if a[1][0] in ('melee', 'kick', 'ranged', 'zap')]
                 if attack_actions:
                     actions = attack_actions
 
@@ -2757,19 +2720,6 @@ class Agent:
         self.inventory.arrange_items().run()
         self.inventory.unreachable_items_until[self.inventory._here()] = self.blstats.time + 5000
 
-    def _touch_petrifies(self, action):
-        # hitting a cockatrice bare-handed (Monk martial arts) or kicking it
-        # barefoot turns you to stone on the spot
-        if action[0] not in ('melee', 'kick'):
-            return False
-        _, dy, dx = action
-        glyph = self.glyphs[self.blstats.y + dy, self.blstats.x + dx]
-        if glyph not in G.MONS or MON.permonst(glyph).mname not in ('cockatrice', 'chickatrice'):
-            return False
-        if action[0] == 'kick':
-            return self.inventory.items.boots is None
-        return self.inventory.items.gloves is None and self.inventory.items.main_hand is None
-
     def _fight2_perform_action(self, best_action, wait_counter):
         if best_action[0] == 'move':
             _, dy, dx = best_action
@@ -2812,11 +2762,6 @@ class Agent:
                 fired = self.fire(ammo, dir)
                 assert fired, (ammo, dir)
                 return wait_counter
-
-        elif best_action[0] == 'force_bolt':
-            _, dy, dx = best_action
-            self.cast('force bolt', direction=(dy, dx))
-            return wait_counter
 
         elif best_action[0] == 'elbereth':
             assert self.inventory.engraving_below_me.lower() != 'elbereth'
@@ -3099,9 +3044,8 @@ class Agent:
             yield False
 
     def should_cast_heal(self):
-        # any role that knows healing (a Monk's starting book is healing one time in three)
-        # spell.c: Stressed or worse, "Your concentration falters while carrying so much stuff" (a lost turn)
-        if self.blstats.carrying_capacity >= 2:
+        # TODO: consider casting for other classes
+        if self.character.role != self.character.HEALER:
             return False
         if 'healing' not in self.character.known_spells:
             return False
@@ -3116,9 +3060,6 @@ class Agent:
         return self.blstats.energy >= 5 and low_hp
 
     def should_cast_extra_heal(self):
-        # spell.c: Stressed or worse, "Your concentration falters while carrying so much stuff" (a lost turn)
-        if self.blstats.carrying_capacity >= 2:
-            return False
         if 'extra healing' not in self.character.known_spells:
             return False
         if self.blstats.hunger_state >= Hunger.FAINTING:
@@ -3134,31 +3075,16 @@ class Agent:
     @utils.debug_log('emergency_strategy')
     @Strategy.wrap
     def emergency_strategy(self):
-        # a cockatrice's touch or hiss starts delayed stoning: a few turns to eat a lizard
-        # or acidic corpse, and prayer fixes it as major trouble even outside the safe window
-        if self.character.prop.stoned:
-            for item in flatten_items(self.inventory.items):
-                if item.is_corpse() and item.monster_id in \
-                        [MON.from_name(n) - nh.GLYPH_MON_OFF for n in ['lizard', 'acid blob']]:
-                    yield True
-                    self.inventory.eat(item, smart=False)
-                    return
-            if self.last_prayer_turn is None or self.blstats.time - self.last_prayer_turn > 5:
-                yield True
-                self.pray()
-                return
 
+        # if self.should_cast_extra_heal():
+        #     yield True
+        #     self.cast('extra healing', direction=(0, 0))
+        #     return
 
-        # a Healer starts with healing and extra healing: cast them before potions and prayer
-        if self.should_cast_extra_heal():
-            yield True
-            self.cast('extra healing', direction=(0, 0))
-            return
-
-        if self.should_cast_heal():
-            yield True
-            self.cast('healing', direction=(0, 0))
-            return
+        # if self.should_cast_heal():
+        #     yield True
+        #     self.cast('healing', direction=(0, 0))
+        #     return
 
         # hypothesis (astra guard.py stop list): stoning, sliming, strangling and food poisoning /
         # terminal illness kill within a few turns; prayer fixes all of them, so a riskier-than-usual
@@ -3327,22 +3253,6 @@ class Agent:
                     self._last_resort_stairs_turn = self.blstats.time
                     self.move('<')
                     return
-                # a known scroll of teleportation is the cleanest way out of melee (read.c: a random spot on the
-                # level; cursed or confused, a random level): the unknown-scroll gamble below read every unknown
-                # scroll, yet 12 of 48 dead elven Wizards still carried an identified one
-                if level.dungeon_number != Level.SOKOBAN and not self.character.prop.blind and \
-                        self._last_resort_tele_turn != self.blstats.time:
-                    scroll = next((i for i in self.inventory.items if i.category == nh.SCROLL_CLASS and
-                                   i.is_unambiguous() and i.object.name == 'teleportation' and
-                                   i.shop_status == Item.NOT_SHOP), None)
-                    if scroll is not None:
-                        yield True
-                        self._last_resort_tele_turn = self.blstats.time
-                        self.log(f'LAST RESORT: reading {scroll.text!r}')
-                        with self.atom_operation():
-                            self.step(A.Command.READ)
-                            self.type_text(self.inventory.items.get_letter(scroll))
-                        return
                 # DESPERATE_PRAYER_GAP: a prayer that may come too soon beats dying. pray.c fixes critically low HP
                 # while the timeout is <= 200; after a successful prayer it is rnz(350), which leaves ~62% of
                 # prayers working 250 turns later and ~77% after 400 (the usual rule waits 500: ~87%). A failure
@@ -3735,7 +3645,7 @@ class Agent:
                         for field in ('role', 'race', 'alignment', 'gender', 'self_glyph'):
                             setattr(self.character, field, getattr(prev, field))
                     self.character.parse_enhance_view()
-                    self.character.parse_spellcast_view()
+                    # self.character.parse_spellcast_view()
                     self.step(A.Command.AUTOPICKUP)
                     if 'Autopickup: ON' in self.message:
                         self.step(A.Command.AUTOPICKUP)
