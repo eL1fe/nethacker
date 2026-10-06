@@ -1,101 +1,109 @@
-"""Role router: plays each game with the engine that measured best for its role.
-
-Layout of a router tree:
-    bot.py              this file
-    router.json         {"default": "<engine>", "roles": {"Monk": "<engine>", ...}}
-    engines/<engine>/   a complete bot tree (its own bot.py, arena_adapter.py, autoascend/ ...)
-
-The arena runs every game in its own process, so only one engine is ever imported per process and
-engines that all name their package `autoascend` do not collide. The role is read from the game's
-welcome line in the first observation.
-"""
 from __future__ import annotations
 
-import importlib.util
-import json
+import importlib
 import os
-import re
-import sys
-from collections.abc import Mapping
+import tempfile
 from pathlib import Path
-from typing import Any
 
-ROOT = Path(__file__).resolve().parent
-ROLES = ('Archeologist', 'Barbarian', 'Caveman', 'Cavewoman', 'Healer', 'Knight', 'Monk', 'Priest',
-         'Priestess', 'Ranger', 'Rogue', 'Samurai', 'Tourist', 'Valkyrie', 'Wizard')
-CANONICAL = {'Cavewoman': 'Caveman', 'Priestess': 'Priest'}
+_cache_root = Path(tempfile.gettempdir()) / "nethack_arena_submission_cache"
+_cache_root.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("XDG_CACHE_HOME", str(_cache_root / "xdg"))
+os.environ.setdefault("NUMBA_CACHE_DIR", str(_cache_root / "numba"))
 
+import roles  # noqa: E402
 
-def _text(observation: Mapping[str, Any]) -> str:
-    parts = []
-    for key in ('message', 'tty_chars'):
-        value = observation.get(key)
-        if value is not None:
-            try:
-                parts.append(bytes(bytearray(int(c) for c in value.reshape(-1))).decode('latin1'))
-            except Exception:
-                pass
-    return ' '.join(parts)
-
-
-RACES = {'human': 'human', 'elven': 'elf', 'dwarven': 'dwarf', 'gnomish': 'gnome', 'orcish': 'orc'}
-
-
-# Xp 1 rank titles (role.c): on a full or new moon the moon message can replace the welcome line, and
-# the status line ("Agent the Rambler") is all that names the role
-TITLES = {'Digger': 'Archeologist', 'Plunderer': 'Barbarian', 'Plunderess': 'Barbarian',
-          'Troglodyte': 'Caveman', 'Rhizotomist': 'Healer', 'Gallant': 'Knight', 'Candidate': 'Monk',
-          'Aspirant': 'Priest', 'Tenderfoot': 'Ranger', 'Footpad': 'Rogue', 'Hatamoto': 'Samurai',
-          'Rambler': 'Tourist', 'Stripling': 'Valkyrie', 'Evoker': 'Wizard'}
+# identity prefix -> specialist engine adapter (from daglar-dragomirov/nethacker@e29eb82, chosen there on held-out
+# games): Healers on vlomshakov's engines, Samurai on daglar's v35. Every other identity plays the main engine, nhbot.
+# Human Priests left PetrAnokhin's pf_pa for nhbot (eL1fe's spell bundle casts their healing): +0.053 +- 0.022 per game
+# over 113 paired held-out games (ph0/ph1), in line with the hub's private seeds (dag25 0.260 vs pf_pa 0.228).
+# v9p (private-safe): only routes that beat nhbot on the hub's VERIFIED (private-seed) tier; the public-seed-selected
+# ports of v6/v7 overfit and are left out, and Tourists are back on nhbot (pf_dtad7a: 0.127 verified vs nhbot ~0.15).
+# v10a: Healers and Samurai back on nhbot -- every Healer/Samurai specialist lost to nhbot on 90 DEV held-out seeds
+# (hea-gno pf_hg -0.050, hea-hum pf_hh -0.024, sam pf_v35 -0.051, pf_v37 -0.111); pre-probe hub runs of hea-gno on nhbot
+# scored 0.24-0.27 verified vs pf_hg 0.160.
+SPECIALISTS = {
+    "arc-gno": "adapter_pf_v36",              # verified 0.405 vs nhbot 0.356
+    "ran-hum-neu": "adapter_pf_s25p8",        # verified 0.31 vs nhbot 0.21-0.25
+    "ran-elf-cha-fem": "adapter_pf_s25p8",    # verified 0.356 vs nhbot 0.325
+    "kni": "adapter_pf_s25p8",                # verified 0.209/0.247 vs nhbot 0.144/0.144
+    # v9p2: the e29-family engines beat four verified runs of nhbot here as well (one verified sample each)
+    "arc-hum-neu": "adapter_pf_s25p8",        # e29/pf_s25p 0.360/0.380 vs nhbot 0.31-0.33
+    "bar-orc": "adapter_pf_s25p8",            # e29/pf_s25p8 0.45-0.48 vs nhbot 0.36-0.41
+    "wiz-hum-neu": "adapter_pf_s25p8",        # dev 90 seeds: pf_s25p8 0.252 > nhbot 0.214 > pf_vk_s25 0.153; verified e29 ~0.25 vs pf_vk_s25 0.125
+}
 
 
-def detect_role(observation: Mapping[str, Any]) -> str | None:
-    text = _text(observation)
-    found = re.search(r'\b(' + '|'.join(ROLES) + r')\b', text)
-    if found:
-        return CANONICAL.get(found.group(1), found.group(1))
-    title = re.search(r'\bthe (' + '|'.join(TITLES) + r')\b', text)
-    return TITLES[title.group(1)] if title else None
-
-
-def detect_race(observation: Mapping[str, Any]) -> str | None:
-    found = re.search(r'\b(' + '|'.join(RACES) + r')\b', _text(observation))
-    return RACES[found.group(1)] if found else None
-
-
-def _load_engine(name: str):
-    engine_dir = ROOT / 'engines' / name
-    # the sandbox chdirs into the submission root; engines read their own files relative to it
-    os.chdir(engine_dir)
-    sys.path.insert(0, str(engine_dir))
-    spec = importlib.util.spec_from_file_location(f'engine_{name}_bot', engine_dir / 'bot.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def _specialist(ident):
+    if not ident or os.environ.get("NHBOT_NO_SPECIALISTS"):
+        return None
+    table = dict(SPECIALISTS)
+    # dev runs: NHBOT_ROUTE='{"tou": "adapter_pf_v25"}' (an empty name routes to nhbot)
+    if os.environ.get("NHBOT_ROUTE"):
+        import json
+        table.update(json.loads(os.environ["NHBOT_ROUTE"]))
+    for prefix in sorted(table, key=len, reverse=True):
+        if ident == prefix or ident.startswith(prefix + "-"):
+            return table[prefix] or None
+    return None
 
 
 class Bot:
+    """Routes each identity to an engine: nhbot (an AutoAscend descendant) or a specialist."""
+
     def __init__(self) -> None:
-        self._config = json.loads((ROOT / 'router.json').read_text())
-        self._inner = None
+        self._drivers = {}
+        self._driver = None
 
-    def reset(self, initial_observation: Mapping[str, Any]) -> None:
-        if self._inner is None:
-            role = detect_role(initial_observation)
-            race = detect_race(initial_observation)
-            # "Healer/gnome" beats "Healer" beats the default
-            roles = self._config['roles']
-            name = roles.get(f'{role}/{race}', roles.get(role, self._config['default']))
-            self._inner = _load_engine(name).make_agent()
-        self._inner.reset(initial_observation)
+    def _get(self, module_name):
+        if module_name not in self._drivers:
+            self._drivers[module_name] = importlib.import_module(module_name).AutoAscendDriver()
+        return self._drivers[module_name]
 
-    def act(self, observation: Mapping[str, Any]) -> int:
-        return self._inner.act(observation)
+    def reset(self, initial_observation):
+        ident = None
+        try:
+            ident = roles.identity(initial_observation)
+        except Exception:  # noqa: BLE001
+            pass
+        # a role-only identity means the welcome line was not seen: ask ^X before choosing the engine
+        self._probe = 0 if ident is None or ident.count("-") != 3 else None
+        self._probe_ident = ident
+        if self._probe is None:
+            self._start(initial_observation, ident)
 
-    def close(self) -> None:
-        if self._inner is not None:
-            self._inner.close()
+    def _start(self, initial_observation, ident):
+        module_name = _specialist(ident) or "adapter"
+        if module_name == "adapter":
+            try:
+                roles.apply(ident)
+            except Exception:  # noqa: BLE001 -- a bad override must never cost the episode
+                pass
+        self._driver = self._get(module_name)
+        self._driver.reset(initial_observation)
+
+    def act(self, observation):
+        if self._probe is not None:
+            import nle.nethack as nh
+            from nle.nethack import actions as A
+            actions = tuple(nh.ACTIONS)
+            if self._probe == 0:
+                self._probe = 1
+                return actions.index(A.Command.ATTRIBUTES)
+            if self._probe == 1:
+                try:
+                    self._probe_ident = roles.attributes_identity(observation) or self._probe_ident
+                except Exception:  # noqa: BLE001
+                    pass
+                self._probe = 2
+                return actions.index(A.Command.ESC)
+            self._probe = None
+            self._start(observation, self._probe_ident)
+        return self._driver.act(observation)
+
+    def close(self):
+        for driver in self._drivers.values():
+            driver.close()
 
 
-def make_agent() -> Bot:
+def make_agent():
     return Bot()
